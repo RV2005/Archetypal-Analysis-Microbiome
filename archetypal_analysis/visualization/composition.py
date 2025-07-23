@@ -449,27 +449,3 @@ class CompositionAnalyzer:
         
         return pd.DataFrame(summary_data)
     
-    def annotate_with_blast(self,
-                           top_taxa_archetypes: List[List[Tuple[float, str]]],
-                           blast_results_file: str,
-                           max_label_length: int = 25) -> List[List[Tuple[float, str]]]:
-        """
-        Annotate archetype taxa with BLAST results.
-        
-        Parameters:
-        -----------
-        top_taxa_archetypes : List[List[Tuple[float, str]]]
-            Top taxa data from analyze_top_taxa
-        blast_results_file : str
-            Path to BLAST XML results file
-        max_label_length : int
-            Maximum length for taxonomic labels
-            
-        Returns:
-        --------
-        annotated_archetypes : List[List[Tuple[float, str]]]
-            Annotated archetype compositions with BLAST descriptions
-        """
-        return self.taxonomic_annotator.annotate_archetype_taxa(
-            top_taxa_archetypes, blast_results_file, max_label_length
-        )

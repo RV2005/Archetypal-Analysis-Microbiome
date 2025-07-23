@@ -69,7 +69,7 @@ class ResultsManager:
         
         print(f"Saved archetypal analysis results to {filepath}")
     
-    def load_archetypal_results(self, filepath: str) -> Dict[str, Any]:
+    def load_archetypal_results(self, filepath: str) -> Dict[str, Any]: # UNTESTED
         """Load archetypal analysis results from JSON file"""
         with open(filepath, 'r') as f:
             return json.load(f)
@@ -77,7 +77,7 @@ class ResultsManager:
     def save_dataframe(self, 
                       df: pd.DataFrame, 
                       filepath: str, 
-                      format: str = "csv") -> None:
+                      format: str = "csv") -> None: # UNTESTED
         """Save DataFrame to file"""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
@@ -92,7 +92,7 @@ class ResultsManager:
         
         print(f"Saved DataFrame to {filepath}")
     
-    def load_dataframe(self, filepath: str, **kwargs) -> pd.DataFrame:
+    def load_dataframe(self, filepath: str, **kwargs) -> pd.DataFrame: # UNTESTED
         """Load DataFrame from file with automatic format detection"""
         if filepath.endswith('.pickle') or filepath.endswith('.pkl'):
             return pd.read_pickle(filepath)
@@ -102,7 +102,7 @@ class ResultsManager:
             return pd.read_csv(filepath, **kwargs)
 
 
-class FASTAWriter:
+class FASTAWriter: # UNTESTED
     """Write sequences in FASTA format"""
     
     @staticmethod
@@ -210,7 +210,8 @@ class DataExporter:
     
     def export_metadata_summary(self, 
                                metadata: pd.DataFrame,
-                               output_path: str) -> None:
+                               output_path: Optional[str] = None, 
+                               verbose: bool = True) -> None:
         """Export metadata summary to TSV file"""
         # Generate value counts for each column
         summary_data = []
@@ -228,8 +229,11 @@ class DataExporter:
                 })
         
         summary_df = pd.DataFrame(summary_data)
-        summary_df.to_csv(output_path, sep="\t", index=False)
-        print(f"Exported metadata summary to {output_path}")
+        if verbose: 
+            print(f"Metadata summary:\n{summary_df.head(n=len(summary_df))}")
+        if output_path:
+            summary_df.to_csv(output_path, sep="\t", index=False)
+            print(f"Exported metadata summary to {output_path}")
     
     def export_archetype_composition(self,
                                    archetypes: np.ndarray,

@@ -57,13 +57,13 @@ class QualityController:
             print(f"Initial OTU table shape: {otu.shape}")
         
         # Apply filters in sequence
-        if min_counts:
-            otu = self._filter_sample_sequencing_depth(otu, min_counts, verbose)
         if min_taxa_level:
             otu = self._na_filter(otu, min_taxa_level, verbose)
         if min_nonzero_samples:
             otu = self._min_nonzero_filter(otu, min_nonzero_samples, verbose)
-        if min_total_counts:
+        if min_counts:
+            otu = self._filter_sample_sequencing_depth(otu, min_counts, verbose)
+        if min_total_counts: # Unused
             otu = self._min_total_counts_filter(otu, min_total_counts, std_filter, verbose)
         
         if verbose:
@@ -99,7 +99,7 @@ class QualityController:
     
     def _min_nonzero_filter(self, otu: pd.DataFrame, min_nonzero_samples: float, verbose: bool = False) -> pd.DataFrame:
         """
-        Remove columns that have non-zero values for only <min_nonzero_samples of samples.
+        Remove columns that have non-zero values for only < min_nonzero_samples % of samples.
         If a column has all zero values, it will be removed regardless of the min_nonzero_samples
         """
         otu_shape = otu.shape

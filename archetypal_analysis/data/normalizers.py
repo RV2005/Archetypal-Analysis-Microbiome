@@ -7,19 +7,16 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Union
 
-from ..utils.metadata import MetadataExtractor
+from ..utils.metadata import extract_metadata_compendium
 from ..config import DatasetConfig
 
 
 class DataNormalizer:
     """Main data normalization class with control/normalize parameters"""
-    
-    def __init__(self, metadata_extractor: Optional[MetadataExtractor] = None):
-        self.metadata_extractor = metadata_extractor or MetadataExtractor()
-    
-    def normalize_data(self, 
-                      control: Dict[str, Optional[List]], 
-                      normalize: Dict[str, Optional[List]], 
+
+    def normalize_data(self,
+                      control: Dict[str, Optional[List]],
+                      normalize: Dict[str, Optional[List]],
                       otu: pd.DataFrame,
                       meta: pd.DataFrame, 
                       tags: pd.DataFrame, 
@@ -65,17 +62,17 @@ class DataNormalizer:
         
         Returns:
         --------
-        normalized_otu : DataFrame
+        - normalized_otu : DataFrame
             The normalized OTU table.
-        normalized_meta : DataFrame
+        - normalized_meta : DataFrame
             The filtered metadata with the normalized samples.
         """
         if ignore is None:
             ignore = []
             
         columns_of_interest = list(control.keys()) + list(normalize.keys())
-        filtered_df = self.metadata_extractor.extract_metadata_compendium(
-            meta.index, tags, meta, projects, columns_of_interest
+        filtered_df = extract_metadata_compendium(
+            otu.index, tags, meta, projects, columns_of_interest, verbose=verbose,
         )
         
         if verbose:

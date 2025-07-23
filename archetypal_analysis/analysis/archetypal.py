@@ -276,31 +276,7 @@ class ArchetypalAnalysis:
             info=result.info,
             filepath=filepath
         )
-    
-    def load_results(self, filepath: str) -> ArchetypalAnalysisResult:
-        """Load results from JSON format"""
-        data = self.results_manager.load_archetypal_results(filepath)
         
-        similarity_degree = pd.DataFrame(
-            data["similarity_degree"],
-            index=data["index"],
-            columns=data["columns"]
-        )
-        
-        info = {
-            "perms": data.get("info_perms", []),
-            "scores": data.get("info_scores", []),
-            "alphas": data.get("info_alphas", [])
-        }
-        
-        return ArchetypalAnalysisResult(
-            similarity_degree=similarity_degree,
-            archetypes=np.array(data["archetypes"]),
-            labels=np.array(data["labels"]),
-            loss=data["loss"],
-            info=info
-        )
-    
     def fit_multiple_k(self,
                       otu_data: pd.DataFrame,
                       k_values: List[int],
@@ -349,42 +325,3 @@ class ArchetypalAnalysis:
         
         return results
 
-
-class ArchetypeSelector:
-    """Utilities for selecting optimal number of archetypes"""
-    
-    @staticmethod
-    def analyze_loss_curves(results: Dict[int, ArchetypalAnalysisResult]) -> pd.DataFrame:
-        """Analyze loss curves across different K values"""
-        analysis_data = []
-        
-        for k, result in results.items():
-            analysis_data.append({
-                'k': k,
-                'loss': result.loss,
-                'n_samples': result.n_samples
-            })
-        
-        analysis_df = pd.DataFrame(analysis_data).sort_values('k')
-        
-        # Calculate loss differences
-        analysis_df['loss_diff'] = analysis_df['loss'].diff()
-        analysis_df['loss_pct_change'] = analysis_df['loss'].pct_change() * 100
-        
-        return analysis_df
-    
-    @staticmethod
-    def find_elbow_point(loss_values: List[float], k_values: List[int]) -> int:
-        """Find elbow point in loss curve using simple heuristic"""
-        # Calculate second derivatives
-        if len(loss_values) < 3:
-            return k_values[0] if k_values else 3
-        
-        second_derivatives = []
-        for i in range(1, len(loss_values) - 1):
-            second_deriv = loss_values[i-1] - 2*loss_values[i] + loss_values[i+1]
-            second_derivatives.append(second_deriv)
-        
-        # Find K with maximum second derivative (sharpest bend)
-        max_idx = np.argmax(second_derivatives)
-        return k_values[max_idx + 1]  # +1 because second derivatives start at index 1
