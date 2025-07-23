@@ -1,0 +1,7 @@
+pandas
+numpy
+matplotlib
+scikit-learn
+progress
+scikit-bio
+archetypes @ git+https://github.com/RV2005/archetypes

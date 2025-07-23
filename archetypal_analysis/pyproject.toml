@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "archetypal-analysis"
+version = "1.0.0"
+description = "Archetypal Analysis Package for Microbiome Research"
+authors = [
+    {name = "Ray Verma", email = "rv2340@nyu.edu"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+keywords = ["archetypal-analysis", "microbiome", "genomics", "bioinformatics"]
+
+dependencies = [
+    "pandas>=1.3.0",
+    "numpy>=1.20.0",
+    "matplotlib>=3.3.0",
+    "scikit-learn>=1.0.0",
+    "scikit-bio>=0.5.6",
+    "tqdm>=4.60.0",
+    "biopython>=1.78",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "black>=21.0",
+    "flake8>=3.8",
+    "mypy>=0.910",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/ghg/archetypal-analysis"
+"Bug Reports" = "https://github.com/ghg/archetypal-analysis/issues"
+"Source" = "https://github.com/ghg/archetypal-analysis"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["archetypal_analysis*"]
+
+[tool.setuptools.package-data]
+archetypal_analysis = ["*.json", "*.yaml", "*.yml"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers"
+testpaths = [
+    "tests",
+]

@@ -1,0 +1,7 @@
+- Merge compendium and hadza loading
+- Remove redundant parts of module
+- Remove unused parts of module
+- Make functions static
+- Structure: metadata stacked bar vs composition stacked bar
+- Blast stuff
+- CHECK IF COMPOSITION STACKED IS CORRECT
