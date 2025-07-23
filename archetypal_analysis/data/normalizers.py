@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Union
 
-from ..utils.metadata import extract_metadata_compendium
+from ..utils.metadata import extract_metadata
 from ..config import DatasetConfig
 
 
@@ -71,7 +71,7 @@ class DataNormalizer:
             ignore = []
             
         columns_of_interest = list(control.keys()) + list(normalize.keys())
-        filtered_df = extract_metadata_compendium(
+        filtered_df = extract_metadata(
             otu.index, tags, meta, projects, columns_of_interest, verbose=verbose,
         )
         

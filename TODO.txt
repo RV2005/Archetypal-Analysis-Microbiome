@@ -1,8 +1,0 @@
-- Merge compendium and hadza loading
-- Create parent function for metadata extraction
-- Remove redundant parts of module
-- Remove unused parts of module
-- Make functions static
-- Structure: metadata stacked bar vs composition stacked bar
-- Blast stuff
-- Fix Readme

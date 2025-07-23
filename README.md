@@ -1,18 +1,16 @@
 # Archetypal Analysis Package
 
-A refactored and modularized Python package for microbiome archetypal analysis, extracted from the original Jupyter notebook workflow.
+A rich package for microbiome evaluation and visualization through Archetypal Analysis. 
 
 ## Overview
 
 This package provides a comprehensive toolkit for performing archetypal analysis on microbiome data, including:
 
-- Data loading and preprocessing
+- Data loading and preprocessing (On the Compendium and Hadza Dataset)
 - Quality control and normalization
-- Archetypal analysis with multiple algorithms
-- Rich visualization capabilities (simplex plots, composition charts)
+- Archetypal analysis 
+- Rich visualization capabilities (simplex plots, composition charts, stacked bar plots)
 - Metadata integration and analysis
-- BLAST-based taxonomic annotation
-- Batch processing for multiple K values
 
 ## Installation
 
@@ -21,13 +19,6 @@ This package provides a comprehensive toolkit for performing archetypal analysis
 ```bash
 pip install pandas numpy matplotlib scikit-learn scikit-bio tqdm
 pip install git+https://github.com/RV2005/archetypes.git
-```
-
-### Optional dependencies
-
-For BLAST analysis:
-```bash
-pip install biopython
 ```
 
 ### Package Installation
@@ -40,279 +31,225 @@ cd archetypal_analysis
 pip install -e .
 ```
 
-## Package Structure
-
-```
-archetypal_analysis/
-├── __init__.py                 # Package initialization
-├── config.py                   # Configuration settings
-├── data/                       # Data handling modules
-│   ├── __init__.py
-│   ├── loaders.py             # Data loading utilities
-│   ├── normalizers.py         # Normalization methods
-│   ├── quality_control.py     # Quality control filters
-│   └── formatters.py          # Data formatting utilities
-├── analysis/                   # Core analysis modules
-│   ├── __init__.py
-│   ├── archetypal.py          # Main archetypal analysis
-│   ├── metrics.py             # Distance and similarity metrics
-│   └── clustering.py          # Clustering utilities
-├── visualization/              # Plotting modules
-│   ├── __init__.py
-│   ├── simplex.py             # Simplex plot utilities
-│   ├── stacked_bar.py         # Composition visualizations
-│   ├── composition.py         # Additional composition plots
-│   └── pcoa.py               # PCoA visualizations
-├── utils/                      # Utility modules
-│   ├── __init__.py
-│   ├── metadata.py            # Metadata handling
-│   ├── file_io.py             # File I/O utilities
-│   └── blast.py               # BLAST analysis tools
-└── examples/                   # Example workflows
-    ├── example_workflow.py    # Basic example
-    └── advanced_workflow.py   # Advanced example
-```
-
 ## Quick Start
-
-### Basic Usage
-
-```python
-import pandas as pd
-from archetypal_analysis.data.loaders import DataLoader
-from archetypal_analysis.analysis.archetypal import ArchetypalAnalyzer
-from archetypal_analysis.visualization.simplex import plot_simplex
-
-# Load data
-loader = DataLoader()
-otu_data = loader.load_otu_data("your_otu_file.csv")
-
-# Run archetypal analysis
-analyzer = ArchetypalAnalyzer(n_archetypes=5, random_state=42)
-result = analyzer.fit_transform(otu_data)
-
-# Create simplex plot
-import matplotlib.pyplot as plt
-fig, ax = plt.subplots(figsize=(10, 8))
-plot_simplex(result.similarity_degree, metadata, ['group'], ax=ax)
-plt.show()
-```
-
-### Advanced Workflow
-
-```python
-from archetypal_analysis.analysis.archetypal import ArchetypalAnalyzer
-from archetypal_analysis.visualization.simplex import plot_multiple_k_simplex
-from archetypal_analysis.visualization.stacked_bar import plot_stacked_bar_composition
-from archetypal_analysis.utils.metadata import extract_metadata_compendium
-
-# Multi-K analysis
-k_values = [3, 5, 7, 8, 10]
-results = {}
-
-for k in k_values:
-    analyzer = ArchetypalAnalyzer(n_archetypes=k)
-    results[k] = analyzer.fit_transform(otu_data)
-
-# Multi-K visualization
-fig, axes = plot_multiple_k_simplex(
-    results_dir="results/",
-    k_values=k_values, 
-    metadata=metadata,
-    filter_cols=['region']
-)
-
-# Composition analysis
-result = results[7]  # Choose K=7
-fig, ax = plot_stacked_bar_composition(
-    result.archetypes,
-    otu_data.columns.tolist(),
-    num_taxa=8
-)
-```
 
 ## Key Features
 
 ### 1. Data Loading and Preprocessing
 
+Load OTU tables and perform quality control.
+
 ```python
-from archetypal_analysis.data.loaders import DataLoader
-from archetypal_analysis.data.normalizers import DataNormalizer
+from archetypal_analysis.data.loaders import CompendiumDataLoader
 from archetypal_analysis.data.quality_control import QualityController
+import os
 
-# Load different data formats
-loader = DataLoader()
-otu_data = loader.load_otu_data("otu_table.csv")
-metadata = loader.load_metadata("sample_metadata.tsv")
+data_loader = CompendiumDataLoader()
+otu_file = r"datasets/compendium/taxonomic_table.csv/raw_taxa_110.csv"
+projects_file = r"datasets/compendium/projects.csv"
+tags_file = r"datasets/compendium/tags.tsv"
+meta_file = r"datasets/compendium/sample_metadata.tsv"
+otu, projects, tags, meta = data_loader.load_all(otu_file=otu_file, projects_file=projects_file, tags_file=tags_file, meta_file=meta_file)
 
-# Apply quality control
+
+control = {"region": ["Europe and Northern America"]} 
+normalize = {"sample_type": ['cervicovaginal swab', 'appendiceal tissue', 'stool', 'ileal mucosal sample', 'fixed tissue samples', 'esophageal biopsy', 'tumor samples']}
+ignore = ["unknown"]
+tol = 0 
+data_normalizer = DataNormalizer()
+otu_norm, norm_meta = data_normalizer.normalize_data(
+    control=control,
+    normalize=normalize,
+    otu=otu,
+    meta=meta, projects=projects, tags=tags,
+    continuous=False,
+    ignore=ignore,
+    tol=tol,
+    verbose=True
+)
+
+# Perform quality control
 qc = QualityController()
-otu_filtered = qc.filter_low_abundance_taxa(otu_data, min_abundance=0.001)
-otu_filtered = qc.filter_low_prevalence_taxa(otu_filtered, min_prevalence=0.1)
+otu_qc = qc.quality_control(
+    otu=otu_norm,
+    verbose=True,
+    min_taxa_level=3,
+    min_nonzero_samples=0.01,
+    min_counts=5000,
+)
+print(otu_qc.shape)
+```
 
-# Normalize data
-normalizer = DataNormalizer()
-otu_normalized = normalizer.total_sum_scaling(otu_filtered)
+### 4. Metadata Parsing
+
+Parse and extract metadata for the samples. This is often a prerequisite for visualization.
+
+```python
+from archetypal_analysis.utils.metadata import extract_metadata
+from archetypal_analysis.data.loaders import CompendiumDataLoader
+
+# Load metadata files
+data_loader = CompendiumDataLoader()
+projects_file = r"datasets/compendium/projects.csv"
+tags_file = r"datasets/compendium/tags.tsv"
+meta_file = r"datasets/compendium/sample_metadata.tsv"
+_, projects, tags, meta = data_loader.load_all(otu_file=None, projects_file=projects_file, tags_file=tags_file, meta_file=meta_file)
+
+# Extract specific metadata columns for your samples
+# 'otu_aa' is the similarity_degree matrix from an analysis result (see Visualization section)
+filter_cols = ["region", "age_months", "sample_type"]
+metadata = extract_metadata(otu_aa.index, tags, meta, projects, extract_cols=filter_cols, verbose=False)
+
+print(metadata.head())
 ```
 
 ### 2. Archetypal Analysis
 
+Run archetypal analysis on the preprocessed data.
+
 ```python
-from archetypal_analysis.analysis.archetypal import ArchetypalAnalyzer
+from archetypal_analysis.analysis.archetypal import ArchetypalAnalysis
 
-# Basic analysis
-analyzer = ArchetypalAnalyzer(
-    n_archetypes=5,
-    method='pgd',
+# Configuration
+FRAC = 1.0
+LOG_TRANSFORM = True
+N_ARCHETYPES = 5
+outDir = r"results"
+
+
+# Initialize and run analysis
+aa = ArchetypalAnalysis(
+    n_archetypes=N_ARCHETYPES,
+    method="pgd",
     max_iter=100,
-    random_state=42
 )
+# otu_qc is from the Data Loading and Preprocessing step
+result = aa.fit_transform(otu_qc,
+                          apply_log_transform=LOG_TRANSFORM,
+                          sample_fraction=FRAC)
 
-result = analyzer.fit_transform(otu_data, apply_log_transform=True)
+# Save results
+aa.save_results(result, outDir, frac=FRAC)
 
-# Access results
-print(f"Loss: {result.loss}")
-print(f"Archetype similarities shape: {result.similarity_degree.shape}")
-print(f"Archetypes shape: {result.archetypes.shape}")
-
-# Get top contributing taxa
-compositions = result.get_archetype_composition(k=10)
+# The result object contains:
+# result.similarity_degree (pandas.DataFrame): Also known as alphas
+# result.archetypes (pandas.DataFrame): Also known as betas
+# result.info (dict): Other information like loss
 ```
 
 ### 3. Visualization
 
+Visualize the results of the archetypal analysis. First, load a result if you have one saved.
+
+```python
+from archetypal_analysis.data.loaders import ArchetypalResultLoader
+
+filepath = r"results\Compendium_N3_N13_NoPC_NoGlom\Norm_pp_100iter_QC-Region30k\otu_AA_K7_1.0_None_jensenshannon.json" 
+
+loader = ArchetypalResultLoader()
+otu_aa, aa_labels, aa_archetypes, info = loader.load_parsed_result(filepath)
+```
+
 #### Simplex Plots
 
-```python
-from archetypal_analysis.visualization.simplex import plot_simplex
+Plot the samples on a simplex, colored by metadata.
 
-# Basic simplex plot
-plot_simplex(
-    otu_aa=result.similarity_degree,
+```python
+from archetypal_analysis.visualization.simplex import SimplexPlotter
+from archetypal_analysis.utils.metadata import extract_metadata
+from archetypal_analysis.data.loaders import CompendiumDataLoader
+
+
+# Load metadata files (as shown in Metadata Parsing section)
+data_loader = CompendiumDataLoader()
+projects_file = r"datasets/compendium/projects.csv"
+tags_file = r"datasets/compendium/tags.tsv"
+meta_file = r"datasets/compendium/sample_metadata.tsv"
+_, projects, tags, meta = data_loader.load_all(otu_file=None, projects_file=projects_file, tags_file=tags_file, meta_file=meta_file)
+
+
+# Extract metadata for the samples in the analysis result
+filter_cols = ["region"]
+metadata = extract_metadata(otu_aa.index, tags, meta, projects, filter_cols, verbose=True)
+
+# Plot
+simplex_plotter = SimplexPlotter()
+simplex_plotter.plot_simplex(
+    otu_aa=otu_aa,
     metadata=metadata,
-    filter_cols=['region'],
-    cmap_name='tab10',
-    legend_type='discrete'
-)
-
-# Continuous coloring (e.g., age)
-plot_simplex(
-    otu_aa=result.similarity_degree,
-    metadata=metadata, 
-    filter_cols=['age_months'],
-    cmap_name='viridis',
-    legend_type='continuous'
+    filter_cols=filter_cols,
+    cmap_name="tab20",
+    legend_type="discrete",
+    remove_nan=True,
+    alpha = 0.5,
+    s=10,
+    remove_values={"region": "unknown"},
+    figsize=(12, 10)
 )
 ```
 
-#### Composition Plots
+#### Composition Plots (Simple Bar and Stacked Bar)
+
+Analyze and visualize the taxonomic composition of the archetypes.
 
 ```python
-from archetypal_analysis.visualization.stacked_bar import (
-    plot_archetype_composition_bars,
-    plot_stacked_bar_composition
+from archetypal_analysis.visualization.composition import CompositionAnalyzer
+from archetypal_analysis.data.loaders import HadzaDataLoader
+
+# Load an OTU table to get feature names (taxa)
+otu_file = r"datasets\tsv\normalized\hadza_otu_normalized_age.csv"
+loader = HadzaDataLoader()
+otu = loader.load_otu_table(filename=otu_file)
+
+# Initialize analyzer
+composition_analyzer = CompositionAnalyzer()
+
+# Get top taxa for each archetype
+NUM_TAXA = 5
+top_taxa_archs = composition_analyzer.analyze_top_taxa(
+    archetypes=aa_archetypes, # from loaded result
+    feature_names=otu.columns,
+    num_taxa=NUM_TAXA,
 )
 
-# Separate bar charts for each archetype
-fig, ax = plot_archetype_composition_bars(
-    result.archetypes,
-    otu_data.columns.tolist(),
-    num_taxa=5
-)
+# Plot as separate bar charts
+composition_analyzer.plot_separate_bar_charts(top_taxa_archetypes=top_taxa_archs)
 
-# Stacked bar chart
-fig, ax = plot_stacked_bar_composition(
-    result.archetypes,
-    otu_data.columns.tolist(),
-    num_taxa=8
-)
+# Plot as a single stacked bar chart
+composition_analyzer.plot_stacked_bar_chart(aa_archetypes=aa_archetypes, feature_names=otu.columns, top_taxa_archetypes=top_taxa_archs, figsize=(12, 6))
 ```
 
-### 4. Metadata Integration
+### Metadata Stacked Bar plot 
+
+Analyze and visualize the distribution of metadata across archetypes using stacked bar plots.
 
 ```python
-from archetypal_analysis.utils.metadata import extract_metadata_compendium
+from archetypal_analysis.visualization.stacked_bar import StackedBarPlotter
 
-# Extract metadata from multiple sources (compendium format)
-metadata = extract_metadata_compendium(
-    index=otu_data.index,
-    tags=tags_df,
-    sample_meta=sample_metadata_df,
-    projects=projects_df,
-    extract_cols=['region', 'age_months', 'sample_type']
+# Initialize plotter
+stacked_bar_plotter = StackedBarPlotter()
+
+# Plot
+stacked_bar_plotter.plot_metadata_stacked_bars(
+    similarity_degree=otu_aa,
+    metadata=metadata,
+    perms=info.get('perms', None),
+    metadata_column="region",
+    discretize=False,
+    buckets=None,
 )
-```
-
-### 5. BLAST Analysis
-
-```python
-from archetypal_analysis.utils.blast import BlastAnalyzer
-
-# Analyze top taxa with BLAST
-blast_analyzer = BlastAnalyzer(num_hits=3)
-blast_results = blast_analyzer.analyze_archetype_taxa(
-    top_taxa_compositions,
-    temp_fasta="temp.fasta",
-    output_xml="blast_results.xml"
-)
-```
-
-## Examples
-
-The package includes two comprehensive examples:
-
-1. **`examples/example_workflow.py`**: Basic workflow demonstrating core functionality
-2. **`examples/advanced_workflow.py`**: Advanced workflow replicating the original notebook analysis
-
-Run the examples:
-
-```bash
-cd archetypal_analysis/examples
-python example_workflow.py
-python advanced_workflow.py
-```
-
-## Configuration
-
-Default settings can be modified in `config.py`:
-
-```python
-from archetypal_analysis.config import AnalysisConfig
-
-# Modify default parameters
-AnalysisConfig.DEFAULT_N_ARCHETYPES = 7
-AnalysisConfig.DEFAULT_MAX_ITER = 200
 ```
 
 ## File Formats
 
 ### Input Data Formats
 
-- **OTU/ASV Table**: CSV file with samples as rows, taxa as columns
+- **OTU Table**: CSV file with samples as rows (with first column index), and taxa as columns. Each column should be named as '.' separated taxonomic levels ("Domain.Kingdom.Phylum.Class.Order.Family.Genus.Species")
 - **Metadata**: TSV/CSV file with samples as rows, metadata columns
-- **Projects**: CSV file with project information (for compendium data)
-- **Tags**: TSV file with sample-level tags (for compendium data)
+- **Optional**
+    - **Projects**: CSV file with project information (for compendium data)
+    - **Tags**: TSV file with (tag, value) pairs for each sample. 
 
-### Output Formats
-
-- **Results**: JSON files with archetypal analysis results
-- **Plots**: PNG/PDF files with high-resolution visualizations
-- **Reports**: Text summaries of analysis results
-
-## Migration from Notebook
-
-This package refactors the original notebook workflow into modular components:
-
-| Notebook Function | Package Module | 
-|---|---|
-| Data loading | `data.loaders` |
-| OTU normalization | `data.normalizers` |
-| Quality control | `data.quality_control` |
-| Archetypal analysis | `analysis.archetypal` |
-| Simplex plotting | `visualization.simplex` |
-| Composition analysis | `visualization.stacked_bar` |
-| Metadata extraction | `utils.metadata` |
-| BLAST analysis | `utils.blast` |
 
 ## Contributing
 
@@ -324,22 +261,6 @@ To extend or modify the package:
 4. Add example usage in docstrings
 5. Update this README with new features
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Import Errors**: Ensure the package is in your Python path
-2. **Missing Dependencies**: Install required packages (pandas, numpy, matplotlib, etc.)
-3. **File Not Found**: Check file paths and data format
-4. **Memory Issues**: Use data sampling for large datasets
-5. **BLAST Errors**: Requires internet connection and BioPython
-
-### Performance Tips
-
-- Use `sample_fraction < 1.0` for large datasets during exploration
-- Reduce `max_iter` for faster (but less accurate) results
-- Use appropriate `num_taxa` values for composition analysis
-- Cache results using the save/load functionality
 
 ## License
 

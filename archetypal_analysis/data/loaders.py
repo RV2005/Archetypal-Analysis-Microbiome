@@ -79,18 +79,6 @@ class HadzaDataLoader(BaseDataLoader):
     def load_otu_table(self, filename: str = "hadza_otu_formatted.tsv", fileDir: Optional[str] = None) -> pd.DataFrame:
         """Load Hadza OTU table"""
         return self.load_df(filename=filename, fileDir=fileDir, index_col=0)
-
-    def load_raw_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """Load raw Hadza data files"""
-        otu_file = os.path.join(self.path_config.tsv_dir, "hadza_otu_nov.tsv")
-        tax_file = os.path.join(self.path_config.tsv_dir, "hadza_tax_nov.tsv")
-        meta_file = os.path.join(self.path_config.tsv_dir, "hadza_sam_nov.tsv")
-
-        otu = self.load_df(filename=otu_file, index_col=0)
-        tax = self.load_df(filename=tax_file, index_col=0)
-        meta = self.load_df(filename=meta_file, index_col=0)
-
-        return otu, tax, meta
     
     def load_all(self, rootDir: Optional[str] = None, 
                 otu_file: Optional[str] = None, 
