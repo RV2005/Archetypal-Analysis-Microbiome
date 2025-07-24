@@ -14,19 +14,11 @@ This package provides a comprehensive toolkit for performing archetypal analysis
 
 ## Installation
 
-### Prerequisites
-
-```bash
-pip install pandas numpy matplotlib scikit-learn scikit-bio tqdm
-pip install git+https://github.com/RV2005/archetypes.git
-```
-
-### Package Installation
-
 1. Clone or download this package
 2. Add the package directory to your Python path, or install in development mode:
 
 ```bash
+pip insall -r requirements.txt
 cd archetypal_analysis
 pip install -e .
 ```
