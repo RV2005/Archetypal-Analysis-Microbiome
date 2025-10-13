@@ -365,7 +365,6 @@ class SimplexPlotter:
                 axis = ax[i // num_cols, i % num_cols]
             else:
                 axis = ax[0]
-            
             # Plot simplex
             self.plot_simplex(
                 otu_aa,

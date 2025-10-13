@@ -25,7 +25,9 @@ class PCoAVisualizer:
                  figsize: Tuple[int, int] = (18, 6),
                  alpha: float = 0.5,
                  s: int = 10,
-                 pc_combinations: Optional[List[Tuple[str, str]]] = None) -> Tuple[plt.Figure, plt.Axes]:
+                 pc_combinations: Optional[List[Tuple[str, str]]] = None,
+                 cmap_name: Optional[str] = None
+                 ) -> Tuple[plt.Figure, plt.Axes]:
         """
         Create PCoA visualization with metadata coloring.
         
@@ -49,7 +51,9 @@ class PCoAVisualizer:
             Point size
         pc_combinations : List[Tuple[str, str]], optional
             PC combinations to plot
-            
+        cmap_name : str, optional
+            Name of colormap to use (default: tab20 for discrete, viridis for continuous)
+        
         Returns:
         --------
         fig : Figure
@@ -72,8 +76,8 @@ class PCoAVisualizer:
         
         # Prepare colors
         filter_labels = plot_metadata[filter_col]
-        color, unique_colors, cmap_name = self._prepare_colors(
-            filter_labels, legend_type
+        color, unique_colors, used_cmap_name = self._prepare_colors(
+            filter_labels, legend_type, cmap_name
         )
         
         # Create subplots
@@ -93,7 +97,7 @@ class PCoAVisualizer:
                 plot_coords[y_pc],
                 s=s,
                 c=color,
-                cmap=cmap_name,
+                cmap=used_cmap_name,
                 alpha=alpha
             )
             
@@ -109,7 +113,7 @@ class PCoAVisualizer:
             if i == 0:
                 self._add_legend_or_colorbar(
                     axs[i], scatter, legend_type, unique_colors, 
-                    filter_col, cmap_name, filter_labels
+                    filter_col, used_cmap_name, filter_labels
                 )
         
         plt.tight_layout()
@@ -117,24 +121,25 @@ class PCoAVisualizer:
     
     def _prepare_colors(self, 
                        filter_labels: pd.Series,
-                       legend_type: str) -> Tuple[pd.Series, Dict, str]:
+                       legend_type: str,
+                       cmap_name: Optional[str] = None) -> Tuple[pd.Series, Dict, str]:
         """Prepare colors for PCoA plotting"""
         if legend_type == "discrete":
             unique_colors = {
                 c: i for i, c in enumerate(sorted(filter_labels.unique(), reverse=True))
             }
             color = filter_labels.map(unique_colors)
-            cmap_name = "tab20"
+            used_cmap_name = cmap_name if cmap_name is not None else "tab20"
         
         elif legend_type == "continuous":
             unique_colors = {}
             color = pd.to_numeric(filter_labels, errors='coerce')
-            cmap_name = "viridis"
+            used_cmap_name = cmap_name if cmap_name is not None else "viridis"
         
         else:
             raise ValueError(f"Unknown legend_type: {legend_type}")
         
-        return color, unique_colors, cmap_name
+        return color, unique_colors, used_cmap_name
     
     def _add_legend_or_colorbar(self,
                                ax: plt.Axes,
@@ -242,5 +247,5 @@ class PCoAVisualizer:
         except Exception as e:
             print(f"Error in PCoA calculation: {e}")
             raise
-    
-    
+
+

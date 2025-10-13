@@ -31,6 +31,7 @@ class StackedBarPlotter:
                    discretize: bool = False,
                    buckets: Optional[List[Tuple[float, float]]] = None,
                    alpha: float = 0.8,
+                   vertex_colors: Optional[Dict[str, float]] = None,
                    **kwargs) -> plt.Axes:
         """
         Enhanced stacked bar method with metadata integration.
@@ -59,9 +60,11 @@ class StackedBarPlotter:
             Bucket ranges for discretization
         alpha : float
             Transparency of bars
+        vertex_colors : Dict[str, float], optional
+            Mapping from vertex label to a float (0-1) for colormap color
         **kwargs
             Additional arguments passed to bar plotting
-            
+        
         Returns:
         --------
         ax : Axes
@@ -92,6 +95,15 @@ class StackedBarPlotter:
         else:
             show_labels = True
         
+        # Prepare colormap and color assignment
+        if vertex_colors is not None:
+            cmap = plt.get_cmap(cmap_name)
+            # Map each vertex label to its color using the provided float value
+            colors = [cmap(vertex_colors.get(label, i / max(1, len(vertices_labels)-1))) for i, label in enumerate(vertices_labels)]
+        else:
+            cmap = plt.get_cmap(cmap_name, len(vertices_labels))
+            colors = [cmap(i) for i in range(len(vertices_labels))]
+        
         if show_labels:
             # Process labels for grouping
             if discretize and buckets is not None:
@@ -106,13 +118,13 @@ class StackedBarPlotter:
             # Plot grouped bars
             self._plot_grouped_bars(
                 ax, label_groups, processed_labels, vertices_labels,
-                cmap_name, pad, alpha, **kwargs
+                cmap_name, pad, alpha, colors=colors, **kwargs
             )
             
         else:
             # Plot simple bars without grouping
             self._plot_simple_bars(
-                ax, points, labels, vertices_labels, **kwargs
+                ax, points, labels, vertices_labels, colors=colors, **kwargs
             )
         
         # Set axis properties
@@ -169,6 +181,7 @@ class StackedBarPlotter:
                           cmap_name: str,
                           pad: float,
                           alpha: float,
+                          colors: Optional[List[Any]] = None,
                           **kwargs) -> None:
         """Plot grouped stacked bars"""
         # Calculate group positions
@@ -176,9 +189,10 @@ class StackedBarPlotter:
         x_centers = np.cumsum(group_sizes) - np.array(group_sizes) // 2
         group_padding = pad * sum(group_sizes)
         
-        # Create colormap
-        cmap = plt.get_cmap(cmap_name, len(vertices_labels))
-        colors = [cmap(i) for i in range(len(vertices_labels))]
+        # Use provided colors or default
+        if colors is None:
+            cmap = plt.get_cmap(cmap_name, len(vertices_labels))
+            colors = [cmap(i) for i in range(len(vertices_labels))]
         
         # Plot bars for each group
         current_x = 0
@@ -231,16 +245,19 @@ class StackedBarPlotter:
                          points: np.ndarray,
                          labels: np.ndarray,
                          vertices_labels: List[str],
+                         colors: Optional[List[Any]] = None,
                          **kwargs) -> None:
         """Plot simple stacked bars without grouping"""
         bottom = np.zeros(len(points))
-        
+        if colors is None:
+            colors = [None] * len(vertices_labels)
         for j, vertex_label in enumerate(vertices_labels):
             ax.bar(
                 labels,
                 points[:, j],
                 label=vertex_label,
                 bottom=bottom,
+                color=colors[j],
                 **kwargs
             )
             bottom += points[:, j]
@@ -278,6 +295,8 @@ class StackedBarPlotter:
                                   discretize: bool = False,
                                   buckets: Optional[List[Tuple[float, float]]] = None,
                                   figsize: Tuple[int, int] = (15, 5),
+                                  vertex_colors: Optional[Dict[str, float]] = None,
+                                  vertices_labels: Optional[List[str]] = None,
                                   **kwargs) -> plt.Axes:
         """
         Plot stacked bars with metadata-based grouping.
@@ -318,17 +337,20 @@ class StackedBarPlotter:
         
         # Get labels
         labels = plot_metadata[metadata_column].values if metadata_column else None
-        
+
+        if vertices_labels is None:
+            vertices_labels = list(plot_similarity.columns)
+
         # Create plot
         fig, ax = plt.subplots(figsize=figsize)
-        
         return self.stacked_bar(
             points=plot_similarity.to_numpy(),
             perms=perms,
             ax=ax,
             labels=labels,
-            vertices_labels=list(plot_similarity.columns),
+            vertex_colors=vertex_colors,
             discretize=discretize,
             buckets=buckets,
+            vertices_labels=vertices_labels,
             **kwargs
         )
