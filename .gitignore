@@ -3,6 +3,7 @@ datasets/*
 
 # Results directories
 results/*
+final_plots/*
 
 # Archived files (optional - uncomment if you want to ignore archived files)
 # archived/
