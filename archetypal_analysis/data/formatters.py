@@ -196,3 +196,8 @@ class DataTransformer:
         data = DataTransformer.remove_infinite_values(data)
         data = DataTransformer.remove_nan(data)
         return data
+
+    @staticmethod
+    def standard_scale(data: pd.DataFrame) -> pd.DataFrame:
+        """Standard scale the data to have mean 0 and std 1 for each feature"""
+        return (data - data.mean()) / data.std(), (data.mean(), data.std())

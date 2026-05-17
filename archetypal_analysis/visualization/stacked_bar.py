@@ -98,8 +98,14 @@ class StackedBarPlotter:
         # Prepare colormap and color assignment
         if vertex_colors is not None:
             cmap = plt.get_cmap(cmap_name)
-            # Map each vertex label to its color using the provided float value
-            colors = [cmap(vertex_colors.get(label, i / max(1, len(vertices_labels)-1))) for i, label in enumerate(vertices_labels)]
+            # Support either numeric cmap positions (legacy) or direct colors (e.g., hex strings).
+            colors = []
+            for i, label in enumerate(vertices_labels):
+                color_value = vertex_colors.get(label, i / max(1, len(vertices_labels) - 1))
+                if isinstance(color_value, (int, float, np.integer, np.floating)):
+                    colors.append(cmap(float(color_value)))
+                else:
+                    colors.append(color_value)
         else:
             cmap = plt.get_cmap(cmap_name, len(vertices_labels))
             colors = [cmap(i) for i in range(len(vertices_labels))]
@@ -266,8 +272,8 @@ class StackedBarPlotter:
     
     def _set_axis_properties(self, ax: plt.Axes, show_labels: bool) -> None:
         """Set axis properties and styling"""
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(True)
+        ax.spines["right"].set_visible(True)
         ax.spines["left"].set_visible(True)
         ax.spines["bottom"].set_visible(True)
         

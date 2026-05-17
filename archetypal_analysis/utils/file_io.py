@@ -6,7 +6,7 @@ import os
 import json
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import pickle
 
 from ..config import FilePatterns
@@ -26,7 +26,8 @@ class ResultsManager:
                                columns: List[str],
                                loss: float,
                                info: Dict[str, Any],
-                               filepath: str) -> None:
+                               filepath: str, 
+                               scalar_params: Optional[Tuple[pd.Series, pd.Series]] = None) -> None:
         """
         Save archetypal analysis results to JSON file.
         
@@ -58,7 +59,11 @@ class ResultsManager:
             "loss": loss,
             "info_perms": info.get("perms", []),
             "info_scores": info.get("scores", []),
-            "info_alphas": info.get("alphas", [])
+            "info_alphas": info.get("alphas", []),
+            "scalar_params": {
+                "mean": scalar_params[0].tolist() if scalar_params else None,
+                "std": scalar_params[1].tolist() if scalar_params else None
+            }
         }
         
         # Ensure directory exists

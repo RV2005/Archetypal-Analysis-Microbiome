@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+import re
 from matplotlib.patches import Patch
 from typing import List, Optional, Tuple, Dict, Any
 import scipy.spatial.distance as distance
@@ -15,6 +16,11 @@ from ..data.formatters import DataTransformer
 
 class PCoAVisualizer:
     """PCoA visualization utilities"""
+
+    @staticmethod
+    def _natural_sort_key(value: Any) -> List[Any]:
+        """Sort labels alphabetically with numeric chunks in numeric order."""
+        return [int(chunk) if chunk.isdigit() else chunk.lower() for chunk in re.split(r"(\d+)", str(value))]
     
     def plot_pcoa(self,
                  pcoa_coordinates: pd.DataFrame,
@@ -102,20 +108,19 @@ class PCoAVisualizer:
             )
             
             # Set labels with proportion explained
-            x_explained = pcoa_results.proportion_explained[int(x_pc[-1])-1]
-            y_explained = pcoa_results.proportion_explained[int(y_pc[-1])-1]
+            x_explained = pcoa_results.proportion_explained.iloc[int(x_pc[-1]) - 1]
+            y_explained = pcoa_results.proportion_explained.iloc[int(y_pc[-1]) - 1]
             
             axs[i].set_xlabel(f"{x_pc} ({x_explained:.2%} variance explained)")
             axs[i].set_ylabel(f"{y_pc} ({y_explained:.2%} variance explained)")
             axs[i].set_title(f"{x_pc} vs {y_pc}")
             
-            # Add legend or colorbar to first plot
-            if i == 0:
-                self._add_legend_or_colorbar(
-                    axs[i], scatter, legend_type, unique_colors, 
-                    filter_col, used_cmap_name, filter_labels
-                )
-        
+        # Add legend or colorbar to last plot
+        self._add_legend_or_colorbar(
+            axs[i], scatter, legend_type, unique_colors, 
+            filter_col, used_cmap_name, filter_labels
+        )
+    
         plt.tight_layout()
         return fig, axs
     
@@ -126,7 +131,7 @@ class PCoAVisualizer:
         """Prepare colors for PCoA plotting"""
         if legend_type == "discrete":
             unique_colors = {
-                c: i for i, c in enumerate(sorted(filter_labels.unique(), reverse=True))
+                c: i for i, c in enumerate(sorted(filter_labels.unique(), key=self._natural_sort_key))
             }
             color = filter_labels.map(unique_colors)
             used_cmap_name = cmap_name if cmap_name is not None else "tab20"
@@ -151,11 +156,37 @@ class PCoAVisualizer:
                                filter_labels: pd.Series) -> None:
         """Add legend or colorbar to PCoA plot"""
         if legend_type == "continuous":
+            numeric_labels = pd.to_numeric(filter_labels, errors='coerce')
+            finite_labels = numeric_labels[np.isfinite(numeric_labels)]
+            if finite_labels.empty:
+                return
+
+            min_val = float(finite_labels.min())
+            max_val = float(finite_labels.max())
+            scatter.set_clim(vmin=min_val, vmax=max_val)
+
             cbar = plt.colorbar(
-                cm.ScalarMappable(cmap=cmap_name), 
-                ax=ax, 
-                label=filter_col
+                scatter,
+                ax=ax
             )
+            tick_min = int(np.rint(min_val))
+            tick_max = int(np.rint(max_val))
+            if tick_min > tick_max:
+                tick_min, tick_max = tick_max, tick_min
+            if tick_min == tick_max:
+                tick_vals = np.array([tick_min], dtype=int)
+            else:
+                n_intervals = min(6, tick_max - tick_min)
+                raw_ticks = np.linspace(tick_min, tick_max, n_intervals + 1)
+                tick_vals = np.unique(np.rint(raw_ticks).astype(int))
+                if tick_vals[0] != tick_min:
+                    tick_vals = np.insert(tick_vals, 0, tick_min)
+                if tick_vals[-1] != tick_max:
+                    tick_vals = np.append(tick_vals, tick_max)
+
+            cbar.set_ticks(tick_vals)
+            cbar.set_ticklabels([f"{int(v)}" for v in tick_vals])
+            cbar.set_label("Age in months")
         else:
             # Create discrete legend
             cmap = plt.get_cmap(cmap_name, len(unique_colors))
@@ -166,7 +197,10 @@ class PCoAVisualizer:
             ax.legend(
                 handles=legend_patches, 
                 title=filter_col, 
-                loc='lower left'
+                loc='lower left',
+                frameon=True,
+                facecolor='white',
+                framealpha=0.85
             )
     
     def create_pcoa_from_otu(self,

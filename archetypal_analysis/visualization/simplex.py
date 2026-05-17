@@ -6,8 +6,10 @@ from unittest import loader
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import re
 from matplotlib.patches import Patch
 from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 from typing import Optional, List, Dict, Any, Union, Tuple
 import os
 from tqdm import tqdm
@@ -22,6 +24,11 @@ from ..utils.metadata import extract_metadata_compendium
 
 class SimplexPlotter:
     """Simplex plotting utilities"""
+
+    @staticmethod
+    def _natural_sort_key(value: Any) -> List[Any]:
+        """Sort labels alphabetically with numeric chunks in numeric order."""
+        return [int(chunk) if chunk.isdigit() else chunk.lower() for chunk in re.split(r"(\d+)", str(value))]
 
     def plot_simplex(
         self,
@@ -40,6 +47,7 @@ class SimplexPlotter:
                     legend_fontsize: int = 12,
                     verbose: bool = False,
                     custom_colors: Optional[Dict[str, Union[int, float]]] = None,
+                    make_arrows=True, 
                     **kwargs) -> plt.Axes:
         """
         Plot simplex visualization with metadata coloring.
@@ -127,6 +135,8 @@ class SimplexPlotter:
             fig, ax = plt.subplots(1, 1, figsize=figsize)
         
         # Plot simplex
+        # Ensure simplex direction arrows are not rendered.
+        kwargs.pop("show_direction", None)
         simplex(
             present_points,
             alpha=alpha,
@@ -134,7 +144,9 @@ class SimplexPlotter:
             c=color,
             cmap=cmap,
             s=s,
+            show_direction=False,
             vertices_labels=otu_aa.columns,
+            make_arrows=make_arrows,
             **kwargs
         )
         
@@ -212,7 +224,7 @@ class SimplexPlotter:
                 }
             else:
                 unique_colors = {
-                    c: i for i, c in enumerate(sorted(filter_labels.unique(), reverse=True))
+                    c: i for i, c in enumerate(sorted(filter_labels.unique(), key=self._natural_sort_key))
                 }
             color = filter_labels.map(unique_colors)
             cmap = plt.get_cmap(cmap_name, len(unique_colors))
@@ -251,13 +263,24 @@ class SimplexPlotter:
             )
         
         elif legend_type == "continuous":
+            numeric_labels = pd.to_numeric(filter_labels, errors='coerce')
+            finite_labels = numeric_labels[np.isfinite(numeric_labels)]
+            if finite_labels.empty:
+                return
+
+            min_val = float(finite_labels.min())
+            max_val = float(finite_labels.max())
+            if min_val == max_val:
+                max_val = min_val + 1e-9
+
             cbar = plt.colorbar(
-                ScalarMappable(cmap=plt.get_cmap(cmap_name)), 
+                ScalarMappable(
+                    cmap=plt.get_cmap(cmap_name),
+                    norm=Normalize(vmin=min_val, vmax=max_val)
+                ), 
                 ax=ax, 
                 orientation='vertical'
             )
-            min_val = filter_labels.min()
-            max_val = filter_labels.max()
             cbar.set_label(f"{', '.join(filter_cols)}: min: {min_val}; max: {max_val}")
     
     def plot_group_simplex(self, 

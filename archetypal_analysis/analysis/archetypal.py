@@ -25,13 +25,15 @@ class ArchetypalAnalysisResult:
                  labels: np.ndarray,
                  loss: float,
                  info: Dict[str, Any],
-                 original_data: Optional[pd.DataFrame] = None):
+                 original_data: Optional[pd.DataFrame] = None, 
+                 scalar_params: Optional[Tuple[pd.Series, pd.Series]] = None):
         self.similarity_degree = similarity_degree
         self.archetypes = archetypes
         self.labels = labels
         self.loss = loss
         self.info = info
         self.original_data = original_data
+        self.scalar_params = scalar_params
     
     @property
     def n_archetypes(self) -> int:
@@ -108,12 +110,15 @@ class ArchetypalAnalysis:
         # Analysis state
         self._aa_model = None
         self._last_result = None
+        
+        self.scalar_params = None # Mean, std
     
     def fit_transform(self, 
                      otu_data: pd.DataFrame,
                      apply_log_transform: bool = True,
                      sample_fraction: float = 1.0,
-                     verbose: bool = True) -> ArchetypalAnalysisResult:
+                     verbose: bool = True, 
+                     std_scale: bool = False) -> ArchetypalAnalysisResult:
         """
         Fit archetypal analysis and return results.
         
@@ -138,7 +143,7 @@ class ArchetypalAnalysis:
             print(f"Input data shape: {otu_data.shape}")
         
         # Prepare data
-        processed_data = self._prepare_data(otu_data, apply_log_transform, sample_fraction)
+        processed_data = self._prepare_data(otu_data, apply_log_transform, sample_fraction, std_scale)
         
         if verbose:
             print(f"Processed data shape: {processed_data.shape}")
@@ -160,7 +165,8 @@ class ArchetypalAnalysis:
     def _prepare_data(self, 
                      otu_data: pd.DataFrame,
                      apply_log_transform: bool,
-                     sample_fraction: float) -> pd.DataFrame:
+                     sample_fraction: float,
+                     std_scale: bool) -> pd.DataFrame:
         """Prepare data for archetypal analysis"""
         # Sample data if needed
         if sample_fraction < 1.0:
@@ -172,6 +178,10 @@ class ArchetypalAnalysis:
         
         # Handle infinite values
         otu_data = self.data_transformer.remove_infinite_values(otu_data)
+        
+        # Standard Scale if needed: 
+        if std_scale:
+            otu_data, self.scalar_params = self.data_transformer.standard_scale(otu_data)
         
         return otu_data
     
@@ -228,7 +238,8 @@ class ArchetypalAnalysis:
                 "scores": info["scores"][0].tolist() if info["scores"] else [],
                 "alphas": info["alphas"][0].tolist() if info["alphas"] else []
             },
-            original_data=original_data
+            original_data=original_data, 
+            scalar_params=self.scalar_params
         )
     
     def save_results(self, 
@@ -272,6 +283,7 @@ class ArchetypalAnalysis:
             labels=result.labels,
             index=result.similarity_degree.index.tolist(),
             columns=result.archetype_names,
+            scalar_params=result.scalar_params,
             loss=result.loss,
             info=result.info,
             filepath=filepath

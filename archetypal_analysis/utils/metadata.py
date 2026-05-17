@@ -56,6 +56,9 @@ def extract_metadata_compendium(index: pd.Index,
     Returns:
         DataFrame with extracted metadata for the samples
     """
+    # Ensure target index is an Index object to simplify downstream reindex logic.
+    index = pd.Index(index)
+
     # Categorize columns by source
     project_cols = [col for col in extract_cols if col in projects.columns] if projects is not None else []
     sample_cols = [col for col in extract_cols if col in sample_meta.columns] if sample_meta is not None else []
@@ -71,23 +74,52 @@ def extract_metadata_compendium(index: pd.Index,
     
     # Extract project-level metadata
     for col in project_cols:
-        metadata[col] = metadata.index.map(lambda x: projects.loc[x.split("_")[0], col])
+        projects_local = projects.copy()
+        if not projects_local.index.is_unique:
+            projects_local = projects_local[~projects_local.index.duplicated(keep="first")]
+
+        metadata[col] = metadata.index.map(
+            lambda x: projects_local.loc[x.split("_")[0], col]
+            if isinstance(x, str) and x.split("_")[0] in projects_local.index
+            else np.nan
+        )
     
     # Prepare sample metadata with combined index
-    sample_meta_indexed = sample_meta.copy()
-    if "project" in sample_meta.columns and "srr" in sample_meta.columns:    
-        sample_meta_indexed["sample"] = sample_meta_indexed["project"] + "_" + sample_meta_indexed["srr"]
-        sample_meta_indexed.set_index("sample", inplace=True)
+    sample_meta_indexed = None
+    if sample_meta is not None:
+        sample_meta_indexed = sample_meta.copy()
+        if "project" in sample_meta_indexed.columns and "srr" in sample_meta_indexed.columns:
+            sample_meta_indexed["sample"] = (
+                sample_meta_indexed["project"].astype(str) + "_" + sample_meta_indexed["srr"].astype(str)
+            )
+            sample_meta_indexed.set_index("sample", inplace=True)
+
+        if not sample_meta_indexed.index.is_unique:
+            sample_meta_indexed = sample_meta_indexed[~sample_meta_indexed.index.duplicated(keep="first")]
     
     # Extract sample-level metadata
     for col in sample_cols:
-        metadata[col] = sample_meta_indexed[col]
+        if sample_meta_indexed is None or col not in sample_meta_indexed.columns:
+            metadata[col] = np.nan
+            continue
+        metadata[col] = sample_meta_indexed[col].reindex(metadata.index)
     
     # Extract tag-based metadata
     for col in tags_cols:
-        col_tags_df = tags[tags["tag"] == col]
-        col_tags_df["sample"] = col_tags_df["project"] + "_" + col_tags_df["srr"]
+        if tags is None or not set(["project", "srr", "tag", "value"]).issubset(tags.columns):
+            metadata[col] = np.nan
+            continue
+
+        col_tags_df = tags[tags["tag"] == col].copy()
+        if len(col_tags_df) == 0:
+            metadata[col] = np.nan
+            continue
+
+        col_tags_df["sample"] = col_tags_df["project"].astype(str) + "_" + col_tags_df["srr"].astype(str)
         col_tags_df.set_index("sample", inplace=True)
-        metadata[col] = col_tags_df["value"]
+        if not col_tags_df.index.is_unique:
+            col_tags_df = col_tags_df[~col_tags_df.index.duplicated(keep="first")]
+
+        metadata[col] = col_tags_df["value"].reindex(metadata.index)
     
     return metadata

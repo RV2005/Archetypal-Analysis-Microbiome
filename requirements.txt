@@ -1,7 +1,8 @@
 pandas
 numpy
 matplotlib
-scikit-learn
+scikit-learn==1.6
 progress
 scikit-bio
+tqdm
 archetypes @ git+https://github.com/RV2005/archetypes
