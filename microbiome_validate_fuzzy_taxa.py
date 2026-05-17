@@ -28,6 +28,7 @@ Author: Bioinformatics Pipeline
 import argparse
 import json
 import logging
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -62,6 +63,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from archetypal_analysis.utils.metadata import extract_metadata
+
 # Optional imports
 try:
     from boruta import BorutaPy
@@ -70,6 +73,27 @@ except ImportError:
     HAS_BORUTA = False
 
 import platform
+
+
+def json_serializable_default(obj):
+    """Convert NumPy/Pandas values that the stdlib JSON encoder cannot handle."""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, pd.Timestamp):
+        return obj.isoformat()
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+
+def dump_json(data, path: Path) -> None:
+    """Write JSON with support for common scientific Python scalar types."""
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2, default=json_serializable_default)
 
 
 # ============================================================================
@@ -161,12 +185,260 @@ def load_metadata(
     if logger:
         logger.info(f"Loading metadata from {filepath}")
     
-    metadata = pd.read_csv(filepath, sep=sep, index_col=0)
+    metadata = pd.read_csv(filepath, sep=sep, index_col=0, low_memory=False)
     
     if logger:
         logger.info(f"Loaded metadata: shape={metadata.shape}")
     
     return metadata
+
+
+def _resolve_config_path(value: Optional[str], base_dir: Path) -> Optional[str]:
+    """Resolve relative config paths against the config file location."""
+    if value is None:
+        return None
+    path = Path(value)
+    if path.is_absolute():
+        return str(path)
+    return str((base_dir / path).resolve())
+
+
+def apply_dataset_config(args: argparse.Namespace) -> argparse.Namespace:
+    """Populate input arguments from dataset_configs.json when --dataset is used."""
+    if not args.dataset:
+        return args
+
+    config_path = Path(args.dataset_config_file)
+    if not config_path.is_absolute():
+        config_path = Path.cwd() / config_path
+
+    with open(config_path, 'r') as f:
+        configs = json.load(f)
+
+    if args.dataset not in configs:
+        available = ', '.join(sorted(configs))
+        raise ValueError(
+            f"Dataset '{args.dataset}' not found in {config_path}. "
+            f"Available datasets: {available}"
+        )
+
+    cfg = configs[args.dataset]
+    base_dir = config_path.parent
+
+    config_arg_map = {
+        'otu_file': 'otu_file',
+        'metadata_file': 'meta_file',
+        'projects_file': 'projects_file',
+        'tags_file': 'tags_file',
+        'clinical_col': 'metadata_col',
+        'top_taxa_file': 'top_taxa_file',
+        'metadata_sample_col': 'metadata_sample_col',
+        'metadata_dataset': 'metadata_dataset',
+    }
+    for arg_name, config_key in config_arg_map.items():
+        if getattr(args, arg_name, None) is None and cfg.get(config_key) is not None:
+            value = cfg[config_key]
+            if arg_name in {
+                'otu_file',
+                'metadata_file',
+                'projects_file',
+                'tags_file',
+                'top_taxa_file',
+            }:
+                value = _resolve_config_path(value, base_dir)
+            setattr(args, arg_name, value)
+
+    if args.output_dir is None:
+        args.output_dir = str(
+            (Path.cwd() / "results_validate_fuzzy_taxa" / args.dataset).resolve()
+        )
+    if args.metadata_dataset is None:
+        args.metadata_dataset = 'compendium'
+
+    args.dataset_config = cfg
+    return args
+
+
+def validate_required_inputs(args: argparse.Namespace) -> None:
+    """Check required inputs after optional dataset config expansion."""
+    if args.metadata_dataset is None:
+        args.metadata_dataset = 'compendium'
+    required = {
+        'otu_file': '--otu_file',
+        'metadata_file': '--metadata_file',
+        'clinical_col': '--clinical_col',
+        'top_taxa_file': '--top_taxa_file',
+        'output_dir': '--output_dir',
+    }
+    missing = [
+        flag for attr, flag in required.items()
+        if getattr(args, attr, None) is None
+    ]
+    if missing:
+        config_hint = " or provide --dataset to load them from dataset_configs.json"
+        raise ValueError(f"Missing required arguments: {', '.join(missing)}{config_hint}")
+
+
+def metadata_columns_to_extract(args: argparse.Namespace) -> List[str]:
+    """Return phenotype/covariate columns needed from metadata sources."""
+    columns = [args.clinical_col]
+    if args.covariates:
+        columns.extend(c.strip() for c in args.covariates.split(',') if c.strip())
+    return list(dict.fromkeys(columns))
+
+
+def load_optional_metadata_source(
+    filepath: Optional[str],
+    sep: str = 'auto',
+    logger: Optional[logging.Logger] = None,
+    label: str = 'metadata source'
+) -> Optional[pd.DataFrame]:
+    """Load optional projects/tags metadata tables."""
+    if not filepath:
+        return None
+    if logger:
+        logger.info(f"Loading {label} from {filepath}")
+    return load_metadata(Path(filepath), sep, logger)
+
+
+def prepare_sample_metadata_for_extraction(
+    metadata: pd.DataFrame,
+    metadata_sample_col: Optional[str],
+) -> pd.DataFrame:
+    """Prepare sample metadata for archetypal_analysis.utils.metadata.extract_metadata."""
+    if metadata_sample_col is None:
+        return metadata
+    if metadata_sample_col not in metadata.columns:
+        raise ValueError(
+            f"metadata_sample_col '{metadata_sample_col}' not found in metadata!"
+        )
+    metadata = metadata.copy()
+    metadata.index = metadata[metadata_sample_col].astype(str)
+    return metadata
+
+
+def extract_validation_metadata(
+    sample_index: pd.Index,
+    sample_meta: pd.DataFrame,
+    projects: Optional[pd.DataFrame],
+    tags: Optional[pd.DataFrame],
+    extract_cols: List[str],
+    metadata_dataset: str = 'compendium',
+    logger: Optional[logging.Logger] = None,
+) -> pd.DataFrame:
+    """Extract metadata aligned to sample_index via the package metadata utility."""
+    metadata = extract_metadata(
+        index=pd.Index(sample_index),
+        tags=tags,
+        sample_meta=sample_meta,
+        projects=projects,
+        extract_cols=extract_cols,
+        dataset=metadata_dataset,
+        verbose=False,
+    )
+    if metadata is None:
+        raise ValueError(
+            f"extract_metadata returned no metadata for dataset='{metadata_dataset}'"
+        )
+    missing_cols = [col for col in extract_cols if col not in metadata.columns]
+    if missing_cols:
+        raise ValueError(
+            "Extracted metadata is missing required columns: "
+            + ', '.join(missing_cols)
+        )
+    if logger:
+        n_with_metadata = metadata[extract_cols].notna().any(axis=1).sum()
+        logger.info(
+            f"Extracted metadata for {n_with_metadata}/{len(metadata)} samples "
+            f"using dataset='{metadata_dataset}'"
+        )
+    return metadata
+
+
+def count_metadata_matches(metadata: pd.DataFrame, columns: List[str]) -> int:
+    """Count rows with at least one extracted metadata value."""
+    return int(metadata[columns].notna().any(axis=1).sum())
+
+
+def detect_otu_orientation_with_metadata(
+    otu: pd.DataFrame,
+    sample_meta: pd.DataFrame,
+    projects: Optional[pd.DataFrame],
+    tags: Optional[pd.DataFrame],
+    extract_cols: List[str],
+    metadata_dataset: str,
+    logger: Optional[logging.Logger] = None,
+) -> str:
+    """Detect OTU orientation by extracting metadata for both possible sample axes."""
+    index_metadata = extract_validation_metadata(
+        otu.index,
+        sample_meta,
+        projects,
+        tags,
+        extract_cols,
+        metadata_dataset,
+    )
+    column_metadata = extract_validation_metadata(
+        otu.columns,
+        sample_meta,
+        projects,
+        tags,
+        extract_cols,
+        metadata_dataset,
+    )
+    index_matches = count_metadata_matches(index_metadata, extract_cols)
+    column_matches = count_metadata_matches(column_metadata, extract_cols)
+    if logger:
+        logger.info(
+            "Orientation check via extract_metadata: "
+            f"index matches={index_matches}, column matches={column_matches}"
+        )
+    if index_matches >= column_matches:
+        return 'samples_rows'
+    return 'taxa_rows'
+
+
+def match_samples_from_extracted_metadata(
+    otu: pd.DataFrame,
+    metadata: pd.DataFrame,
+    extract_cols: List[str],
+    logger: Optional[logging.Logger] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Match samples using metadata already aligned by extract_metadata.
+
+    Returns: (otu_matched, metadata_matched, sample_matching_report)
+    """
+    has_metadata = metadata[extract_cols].notna().any(axis=1)
+    matched_index = metadata.index[has_metadata]
+    otu_matched = otu.loc[matched_index].copy()
+    metadata_matched = metadata.loc[matched_index].copy()
+
+    report = pd.DataFrame({
+        'category': [
+            'OTU samples',
+            'Metadata-extracted rows',
+            'Shared with extracted metadata',
+            'OTU without extracted metadata',
+        ],
+        'count': [
+            len(otu.index),
+            len(metadata.index),
+            len(matched_index),
+            len(otu.index) - len(matched_index),
+        ]
+    })
+
+    if len(matched_index) < 2:
+        raise ValueError("Fewer than 2 samples with extracted metadata!")
+
+    if logger:
+        logger.info(
+            f"After metadata extraction: {otu_matched.shape[0]} samples, "
+            f"{otu_matched.shape[1]} taxa"
+        )
+
+    return otu_matched, metadata_matched, report
 
 
 def detect_otu_orientation(
@@ -352,7 +624,10 @@ def validate_clinical_column(
     le = LabelEncoder()
     encoded = le.fit_transform(clinical)
     
-    class_counts = dict(zip(le.classes_, np.bincount(encoded)))
+    class_counts = {
+        cls: int(count)
+        for cls, count in zip(le.classes_, np.bincount(encoded))
+    }
     
     if logger:
         for cls, count in sorted(class_counts.items()):
@@ -386,9 +661,12 @@ def load_top_taxa(
     if logger:
         logger.info(f"Loaded {len(top_taxa)} fuzzy taxa")
     
-    # Ensure required columns
+    # Ensure required columns. final_plots.ipynb exports this as "Taxa".
     if 'taxon' not in top_taxa.columns:
-        raise ValueError("Top taxa file must contain 'taxon' column!")
+        if 'Taxa' in top_taxa.columns:
+            top_taxa = top_taxa.rename(columns={'Taxa': 'taxon'})
+        else:
+            raise ValueError("Top taxa file must contain 'taxon' or 'Taxa' column!")
     
     return top_taxa
 
@@ -448,7 +726,8 @@ def generate_ancombc2_script(
     
     covariates_str = ""
     if covariates:
-        covariates_str = f", adj_vars = c({', '.join([f'\"' + c + '\"' for c in covariates])})"
+        quoted_covariates = ', '.join(f'"{c}"' for c in covariates)
+        covariates_str = f", adj_vars = c({quoted_covariates})"
     
     script_content = f'''#!/usr/bin/env Rscript
 # ANCOM-BC2 differential abundance analysis
@@ -646,6 +925,26 @@ message("ALDEx2 analysis completed successfully")
 # DIFFERENTIAL ABUNDANCE EXECUTION
 # ============================================================================
 
+def find_rscript() -> Optional[str]:
+    """Return the Rscript executable path if available on PATH."""
+    return shutil.which("Rscript")
+
+
+def write_method_skipped(
+    output_dir: Path,
+    method_name: str,
+    reason: str,
+    logger: Optional[logging.Logger] = None
+) -> None:
+    """Record that an optional method was skipped."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    skipped_path = output_dir / f"{method_name}_skipped.txt"
+    with open(skipped_path, 'w') as f:
+        f.write(reason.rstrip() + "\n")
+    if logger:
+        logger.warning(f"{method_name} skipped: {reason}")
+
+
 def run_r_script(
     script_path: Path,
     args: List[str],
@@ -660,13 +959,24 @@ def run_r_script(
     """
     stdout_path = output_dir / f"{method_name}_stdout.log"
     stderr_path = output_dir / f"{method_name}_stderr.log"
+    rscript = find_rscript()
+    if rscript is None:
+        reason = (
+            "Rscript was not found on PATH. Install R or load an R module, "
+            "or disable R-based differential abundance methods."
+        )
+        with open(stderr_path, 'w') as f:
+            f.write(reason + "\n")
+        if logger:
+            logger.warning(reason)
+        return False, stdout_path, stderr_path
     
     try:
         if logger:
             logger.info(f"Running R script: {script_path}")
         
         result = subprocess.run(
-            ["Rscript", str(script_path)] + args,
+            [rscript, str(script_path)] + args,
             stdout=open(stdout_path, 'w'),
             stderr=open(stderr_path, 'w'),
             timeout=3600  # 1 hour timeout
@@ -750,6 +1060,27 @@ def standardize_da_results(
     return std_df
 
 
+DA_RESULT_COLUMNS = [
+    'method',
+    'taxon',
+    'contrast',
+    'effect_size',
+    'statistic',
+    'p_value',
+    'q_value',
+    'direction',
+    'significant',
+]
+
+DIRECTION_AGREEMENT_COLUMNS = [
+    'taxon',
+    'da_direction',
+    'da_significant',
+    'ml_direction',
+    'direction_agrees',
+]
+
+
 def run_ancombc2(
     otu_raw: pd.DataFrame,
     metadata: pd.DataFrame,
@@ -762,6 +1093,15 @@ def run_ancombc2(
     """Run ANCOM-BC2 differential abundance."""
     da_dir = output_dir / "differential_abundance" / "ancombc2"
     da_dir.mkdir(parents=True, exist_ok=True)
+
+    if find_rscript() is None:
+        write_method_skipped(
+            da_dir,
+            "ancombc2",
+            "Rscript was not found on PATH. ANCOM-BC2 requires R and was skipped.",
+            logger,
+        )
+        return None
     
     try:
         # Generate script
@@ -828,6 +1168,15 @@ def run_aldex2(
     """Run ALDEx2 differential abundance."""
     da_dir = output_dir / "differential_abundance" / "aldex2"
     da_dir.mkdir(parents=True, exist_ok=True)
+
+    if find_rscript() is None:
+        write_method_skipped(
+            da_dir,
+            "aldex2",
+            "Rscript was not found on PATH. ALDEx2 requires R and was skipped.",
+            logger,
+        )
+        return None
     
     try:
         # Generate script
@@ -1774,12 +2123,26 @@ EXAMPLE USAGE:
         """
     )
     
-    # Required arguments
-    parser.add_argument('--otu_file', required=True, help='Raw OTU/ASV table')
-    parser.add_argument('--metadata_file', required=True, help='Metadata table')
-    parser.add_argument('--clinical_col', required=True, help='Clinical phenotype column')
-    parser.add_argument('--top_taxa_file', required=True, help='Fuzzy-selected top taxa file')
-    parser.add_argument('--output_dir', required=True, help='Output directory')
+    # Required directly, or populated by --dataset from dataset_configs.json
+    parser.add_argument('--otu_file', default=None, help='Raw OTU/ASV table')
+    parser.add_argument('--metadata_file', default=None, help='Metadata table')
+    parser.add_argument('--clinical_col', default=None, help='Clinical phenotype column')
+    parser.add_argument('--top_taxa_file', default=None, help='Fuzzy-selected top taxa file')
+    parser.add_argument('--output_dir', default=None, help='Output directory')
+    parser.add_argument('--dataset', default=None, help='Dataset key in dataset_configs.json')
+    parser.add_argument(
+        '--dataset_config_file',
+        default='dataset_configs.json',
+        help='Dataset config JSON used with --dataset'
+    )
+    parser.add_argument('--projects_file', default=None, help='Compendium projects metadata file')
+    parser.add_argument('--tags_file', default=None, help='Compendium tags metadata file')
+    parser.add_argument(
+        '--metadata_dataset',
+        choices=['compendium', 'hadza'],
+        default=None,
+        help='Metadata extraction mode passed to archetypal_analysis.utils.metadata.extract_metadata'
+    )
     
     # Optional sample/delimiter arguments
     parser.add_argument('--metadata_sample_col', default=None, help='Sample ID column in metadata (default: use index)')
@@ -1801,8 +2164,11 @@ EXAMPLE USAGE:
     
     # Method flags
     parser.add_argument('--run_boruta', action='store_true', help='Run BorutaPy')
-    parser.add_argument('--run_ancombc2', action='store_true', default=True, help='Run ANCOM-BC2 (default: True)')
-    parser.add_argument('--run_aldex2', action='store_true', default=True, help='Run ALDEx2 (default: True)')
+    parser.set_defaults(run_ancombc2=True, run_aldex2=True)
+    parser.add_argument('--run_ancombc2', dest='run_ancombc2', action='store_true', help='Run ANCOM-BC2')
+    parser.add_argument('--skip_ancombc2', dest='run_ancombc2', action='store_false', help='Skip ANCOM-BC2')
+    parser.add_argument('--run_aldex2', dest='run_aldex2', action='store_true', help='Run ALDEx2')
+    parser.add_argument('--skip_aldex2', dest='run_aldex2', action='store_false', help='Skip ALDEx2')
     
     # Advanced options
     parser.add_argument('--covariates', default=None, help='Comma-separated covariates')
@@ -1821,6 +2187,8 @@ def main():
     """Main pipeline execution."""
     
     args = parse_arguments()
+    args = apply_dataset_config(args)
+    validate_required_inputs(args)
     
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -1835,8 +2203,7 @@ def main():
     
     # Save run config
     config_path = output_dir / "run_config.json"
-    with open(config_path, 'w') as f:
-        json.dump(vars(args), f, indent=2)
+    dump_json(vars(args), config_path)
     logger.info(f"Configuration saved: {config_path}")
     
     # Save software versions
@@ -1852,11 +2219,32 @@ def main():
         
         otu_raw = load_otu_table(Path(args.otu_file), args.sep, logger)
         metadata_raw = load_metadata(Path(args.metadata_file), args.sep, logger)
+        metadata_raw = prepare_sample_metadata_for_extraction(
+            metadata_raw,
+            args.metadata_sample_col,
+        )
+        projects_raw = load_optional_metadata_source(
+            args.projects_file,
+            args.sep,
+            logger,
+            label='projects metadata',
+        )
+        tags_raw = load_optional_metadata_source(
+            args.tags_file,
+            args.sep,
+            logger,
+            label='tags metadata',
+        )
+        extract_cols = metadata_columns_to_extract(args)
         
         input_summary = {
             'otu_file': args.otu_file,
             'metadata_file': args.metadata_file,
+            'projects_file': args.projects_file,
+            'tags_file': args.tags_file,
+            'metadata_dataset': args.metadata_dataset,
             'clinical_col': args.clinical_col,
+            'metadata_extract_cols': extract_cols,
             'top_taxa_file': args.top_taxa_file
         }
         
@@ -1868,12 +2256,16 @@ def main():
         logger.info("="*80)
         
         # Detect orientation
-        metadata_samples = set(metadata_raw.index)
-        if args.metadata_sample_col:
-            metadata_samples = set(metadata_raw[args.metadata_sample_col])
-        
         if args.otu_orientation == 'auto':
-            detected_orientation = detect_otu_orientation(otu_raw, metadata_samples)
+            detected_orientation = detect_otu_orientation_with_metadata(
+                otu_raw,
+                metadata_raw,
+                projects_raw,
+                tags_raw,
+                extract_cols,
+                args.metadata_dataset,
+                logger,
+            )
             logger.info(f"Detected OTU orientation: {detected_orientation}")
         else:
             detected_orientation = args.otu_orientation
@@ -1881,9 +2273,23 @@ def main():
         # Transpose if needed
         otu_samples_taxa = transpose_if_needed(otu_raw, detected_orientation, logger)
         
-        # Match samples
-        otu_matched, metadata_matched, sample_matching_report = match_samples(
-            otu_samples_taxa, metadata_raw, args.metadata_sample_col, logger
+        # Extract metadata and match samples using package metadata utilities.
+        metadata_extracted = extract_validation_metadata(
+            otu_samples_taxa.index,
+            metadata_raw,
+            projects_raw,
+            tags_raw,
+            extract_cols,
+            args.metadata_dataset,
+            logger,
+        )
+        otu_matched, metadata_matched, sample_matching_report = (
+            match_samples_from_extracted_metadata(
+                otu_samples_taxa,
+                metadata_extracted,
+                extract_cols,
+                logger,
+            )
         )
         
         # Save matched data
@@ -1986,8 +2392,7 @@ def main():
             'n_classes': len(class_counts),
             'class_counts': class_counts
         }
-        with open(qc_dir / "input_summary.json", 'w') as f:
-            json.dump(input_summary_data, f, indent=2)
+        dump_json(input_summary_data, qc_dir / "input_summary.json")
         
         # ====================================================================
         # 8. DIFFERENTIAL ABUNDANCE - ANCOM-BC2
@@ -2049,7 +2454,7 @@ def main():
         if len(da_results_combined) > 0:
             da_results_combined = pd.concat(da_results_combined, ignore_index=True)
         else:
-            da_results_combined = pd.DataFrame()
+            da_results_combined = pd.DataFrame(columns=DA_RESULT_COLUMNS)
         
         if len(da_results_combined) > 0:
             da_results_combined.to_csv(
@@ -2245,7 +2650,7 @@ def main():
         logger.info("14. DIRECTION AGREEMENT")
         logger.info("="*80)
         
-        direction_agreement = pd.DataFrame()
+        direction_agreement = pd.DataFrame(columns=DIRECTION_AGREEMENT_COLUMNS)
         if len(da_results_combined) > 0:
             direction_agreement = compute_direction_agreement(
                 X_log1p,

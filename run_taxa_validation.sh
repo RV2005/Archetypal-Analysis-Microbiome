@@ -7,16 +7,17 @@
 #SBATCH --output=/scratch/rv2340/randomvoronoi/slurm_logs/taxa_validation/%A_%a.out
 
 
-source /share/apps/NYUAD5/miniconda/3-4.11.0/bin/activate
+source /opt/miniconda3/bin/activate
 conda activate GHG_work
 
+DATASET="${DATASET:-sample_type}"
+DATASET_CONFIG_FILE="${DATASET_CONFIG_FILE:-dataset_configs.json}"
+OUTPUT_DIR="${OUTPUT_DIR:-./results_validate_fuzzy_taxa/${DATASET}}"
+
 python_cmd="python microbiome_validate_fuzzy_taxa.py \
-  --otu_file your_otu_table.tsv \
-  --metadata_file your_metadata.tsv \
-  --metadata_sample_col sample_id \
-  --clinical_col disease_status \
-  --top_taxa_file your_fuzzy_taxa.tsv \
-  --output_dir ./results_basic \
+  --dataset ${DATASET} \
+  --dataset_config_file ${DATASET_CONFIG_FILE} \
+  --output_dir ${OUTPUT_DIR} \
   --random_seed 123
 "
 
@@ -38,5 +39,8 @@ echo "=========================================="
 echo "Job Summary:"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Job Name: $SLURM_JOB_NAME"
+echo "Dataset: $DATASET"
+echo "Dataset Config: $DATASET_CONFIG_FILE"
+echo "Output Directory: $OUTPUT_DIR"
 echo "Output File: /scratch/rv2340/randomvoronoi/slurm_logs/taxa_validation/${SLURM_JOB_ID}_%a.out"
 echo "=========================================="

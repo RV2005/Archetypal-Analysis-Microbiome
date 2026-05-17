@@ -26,11 +26,35 @@ def extract_metadata(index: pd.Index = None,
     Returns:
         DataFrame with extracted metadata for the samples
     """
-    if dataset in ['compendium', 'hadza']:
+    if dataset == 'compendium':
         return extract_metadata_compendium(index, tags, sample_meta, projects, extract_cols, verbose)
     elif dataset == 'hadza':
-        # Placeholder for Hadza metadata extraction logic
-        raise NotImplementedError("Hadza metadata extraction not implemented yet.")
+        return extract_metadata_hadza(index, tags, sample_meta, projects, extract_cols, verbose)
+    else:
+        raise ValueError(f"Unsupported metadata dataset: {dataset}")
+
+
+def extract_metadata_hadza(index: pd.Index,
+                           tags: Optional[pd.DataFrame] = None,
+                           sample_meta: Optional[pd.DataFrame] = None,
+                           projects: Optional[pd.DataFrame] = None,
+                           extract_cols: List[str] = [],
+                           verbose: bool = False) -> pd.DataFrame:
+    """
+    Extract metadata from Hadza/direct sample metadata tables.
+
+    Hadza metadata is keyed directly by sample index in the formatted/normalized
+    files used by the package. Reuse the same source-priority implementation as
+    compendium so project/srr-style metadata still works when supplied.
+    """
+    return extract_metadata_compendium(
+        index=index,
+        tags=tags,
+        sample_meta=sample_meta,
+        projects=projects,
+        extract_cols=extract_cols,
+        verbose=verbose,
+    )
 
 
 def extract_metadata_compendium(index: pd.Index, 
