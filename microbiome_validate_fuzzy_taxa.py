@@ -64,6 +64,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from archetypal_analysis.utils.metadata import extract_metadata
+from archetypal_analysis.visualization.composition import CompositionAnalyzer
+from archetypal_analysis.data.loaders import ArchetypalResultLoader
 
 # Optional imports
 try:
@@ -270,10 +272,19 @@ def validate_required_inputs(args: argparse.Namespace) -> None:
         'top_taxa_file': '--top_taxa_file',
         'output_dir': '--output_dir',
     }
+    dataset_cfg = getattr(args, 'dataset_config', None)
+    allow_missing_top_taxa = bool(
+        dataset_cfg
+        and dataset_cfg.get('result_dir')
+        and dataset_cfg.get('otu_file')
+        and dataset_cfg.get('main_k') is not None
+    )
     missing = [
         flag for attr, flag in required.items()
         if getattr(args, attr, None) is None
     ]
+    if allow_missing_top_taxa and '--top_taxa_file' in missing:
+        missing.remove('--top_taxa_file')
     if missing:
         config_hint = " or provide --dataset to load them from dataset_configs.json"
         raise ValueError(f"Missing required arguments: {', '.join(missing)}{config_hint}")
@@ -660,15 +671,174 @@ def load_top_taxa(
     
     if logger:
         logger.info(f"Loaded {len(top_taxa)} fuzzy taxa")
-    
-    # Ensure required columns. final_plots.ipynb exports this as "Taxa".
-    if 'taxon' not in top_taxa.columns:
-        if 'Taxa' in top_taxa.columns:
-            top_taxa = top_taxa.rename(columns={'Taxa': 'taxon'})
-        else:
-            raise ValueError("Top taxa file must contain 'taxon' or 'Taxa' column!")
+
+    # Normalize common column-name variants used by the composition outputs.
+    rename_map = {}
+    column_lookup = {col.strip().lower(): col for col in top_taxa.columns}
+
+    for lower_name, original_name in column_lookup.items():
+        if lower_name in {'archetype', 'cluster', 'category'}:
+            rename_map[original_name] = 'cluster'
+        elif lower_name == 'rank':
+            rename_map[original_name] = 'fuzzy_rank'
+
+    # Ensure required columns. Some exported files have Taxa/Abundance swapped.
+    if 'taxon' not in column_lookup:
+        taxon_col = None
+        membership_col = None
+
+        taxa_name = column_lookup.get('taxa')
+        abundance_name = column_lookup.get('abundance')
+
+        if taxa_name and abundance_name:
+            taxa_numeric = pd.to_numeric(top_taxa[taxa_name], errors='coerce').notna().mean()
+            abundance_numeric = pd.to_numeric(top_taxa[abundance_name], errors='coerce').notna().mean()
+
+            if taxa_numeric > 0.8 and abundance_numeric < 0.8:
+                taxon_col = abundance_name
+                membership_col = taxa_name
+                if logger:
+                    logger.warning(
+                        "Detected swapped fuzzy taxa columns: using '%s' as taxon names and '%s' as abundance values",
+                        abundance_name,
+                        taxa_name,
+                    )
+            else:
+                taxon_col = taxa_name
+                membership_col = abundance_name
+        elif taxa_name:
+            taxon_col = taxa_name
+        elif abundance_name:
+            taxon_col = abundance_name
+
+        if taxon_col is None:
+            raise ValueError("Top taxa file must contain a taxon column such as 'taxon', 'Taxa', or 'Abundance'!")
+
+        rename_map[taxon_col] = 'taxon'
+        if membership_col is not None:
+            rename_map[membership_col] = 'membership'
+
+    if rename_map:
+        top_taxa = top_taxa.rename(columns=rename_map)
+
+    if 'membership' not in top_taxa.columns:
+        membership_source = next(
+            (col for col in ['abundance', 'importance', 'score'] if col in top_taxa.columns),
+            None,
+        )
+        if membership_source is not None:
+            top_taxa = top_taxa.rename(columns={membership_source: 'membership'})
+
+    # Normalize the taxonomy strings so exact matches are more robust
+    top_taxa['taxon'] = top_taxa['taxon'].astype(str).str.strip()
     
     return top_taxa
+
+
+def read_table_auto(filepath: Path) -> pd.DataFrame:
+    """Load a CSV/TSV table using the file extension."""
+    if filepath.suffix == '.tsv':
+        return pd.read_table(filepath, index_col=0)
+    return pd.read_csv(filepath, index_col=0)
+
+
+def resolve_result_path(result_dir: str, k_value: int) -> Path:
+    """Build the archetypal result JSON path (matching final_plots)."""
+    filename = f"otu_AA_K{k_value}_1.0_None_jensenshannon.json"
+    return Path(result_dir) / filename
+
+
+def reorder_archetypes(
+    aa_archetypes: List,
+    archetype_order: Optional[List[str]] = None,
+    logger: Optional[logging.Logger] = None
+) -> Tuple[np.ndarray, Optional[List[str]]]:
+    """Reorder archetypes to match a named ordering list."""
+    arch_array = np.array(aa_archetypes)
+    if not archetype_order:
+        return arch_array, None
+
+    try:
+        idx = [int(name.split()[-1]) - 1 for name in archetype_order]
+    except (ValueError, IndexError) as exc:
+        if logger:
+            logger.warning("Invalid archetype_order values; using default order: %s", exc)
+        return arch_array, None
+
+    if max(idx, default=-1) >= arch_array.shape[0] or min(idx, default=0) < 0:
+        if logger:
+            logger.warning("archetype_order indices out of range; using default order")
+        return arch_array, None
+
+    return arch_array[idx, :], archetype_order
+
+
+def compute_top_taxa_from_dataset_config(
+    dataset_cfg: Dict,
+    output_dir: Path,
+    logger: Optional[logging.Logger] = None
+) -> Path:
+    """Compute top taxa from archetypal results using dataset_configs.json."""
+    result_dir = dataset_cfg.get('result_dir')
+    main_k = dataset_cfg.get('main_k')
+    otu_file = dataset_cfg.get('otu_file')
+
+    if not result_dir or main_k is None or not otu_file:
+        raise ValueError(
+            "Dataset config must include result_dir, main_k, and otu_file to compute top taxa."
+        )
+
+    result_path = resolve_result_path(result_dir, int(main_k))
+    otu_path = Path(otu_file)
+    if not otu_path.is_absolute():
+        otu_path = (Path.cwd() / otu_path).resolve()
+
+    loader = ArchetypalResultLoader()
+    _, _, aa_archetypes, _ = loader.load_parsed_result(str(result_path))
+
+    otu = read_table_auto(otu_path)
+    num_taxa = int(dataset_cfg.get('num_taxa', 5))
+
+    arch_array, arch_names = reorder_archetypes(
+        aa_archetypes,
+        dataset_cfg.get('archetype_order'),
+        logger,
+    )
+    if arch_names is None:
+        arch_names = [f"Archetype {i + 1}" for i in range(len(arch_array))]
+
+    comp = CompositionAnalyzer()
+    top_taxa_by_arch = comp.analyze_top_taxa(
+        archetypes=arch_array,
+        feature_names=otu.columns,
+        archetype_names=arch_names,
+        num_taxa=num_taxa,
+    )
+
+    top_rows = []
+    for archetype_name, arch_data in zip(arch_names, top_taxa_by_arch):
+        rank = 1
+        for abundance, taxon in arch_data:
+            if taxon == 'Others':
+                continue
+            top_rows.append({
+                'Archetype': archetype_name,
+                'Rank': rank,
+                'Taxa': taxon,
+                'Abundance': float(abundance),
+            })
+            rank += 1
+
+    top_taxa_df = pd.DataFrame(top_rows)
+    fuzzy_dir = output_dir / "fuzzy_taxa"
+    fuzzy_dir.mkdir(parents=True, exist_ok=True)
+    output_path = fuzzy_dir / "top_taxa_from_archetypes.tsv"
+    top_taxa_df.to_csv(output_path, sep='\t', index=False)
+
+    if logger:
+        logger.info("Computed top taxa from archetypes: %s", output_path)
+
+    return output_path
 
 
 def match_top_taxa(
@@ -707,6 +877,104 @@ def match_top_taxa(
         logger.info(f"  In OTU but not fuzzy: {len(unmatched_otu)}")
     
     return matched_df, unmatched_top_df, unmatched_otu_df
+
+
+def compute_composition_top_taxa(
+    fuzzy_matched: pd.DataFrame,
+    num_taxa: int,
+    logger: Optional[logging.Logger] = None,
+    return_per_archetype: bool = False
+) -> Union[List[str], List[List[Tuple[float, str]]]]:
+    """
+    Compute top taxa using the composition analyzer.
+    
+    Parameters:
+    -----------
+    fuzzy_matched : pd.DataFrame
+        Fuzzy taxa table with 'taxon' and optional 'cluster'/'archetype'/'category' column
+    num_taxa : int
+        Number of top taxa to extract
+    logger : Optional[logging.Logger]
+        Logger for messages
+    return_per_archetype : bool
+        If True, return list of per-archetype tuples; if False, return flattened list of top taxa globally
+    
+    Returns:
+    --------
+    If return_per_archetype=True:
+        List[List[Tuple[float, str]]]: Top taxa for each archetype with (percentage, taxa_name) tuples
+    If return_per_archetype=False:
+        List[str]: Top num_taxa taxa globally, ranked by mean importance across archetypes
+    """
+    cluster_col = next(
+        (col for col in ['cluster', 'archetype', 'category'] if col in fuzzy_matched.columns),
+        None
+    )
+
+    score_col = None
+    score_series = None
+    for col in ['membership', 'importance', 'fuzzy_rank']:
+        if col in fuzzy_matched.columns:
+            score_col = col
+            score_series = pd.to_numeric(fuzzy_matched[col], errors='coerce')
+            break
+
+    if score_col is None:
+        raise ValueError(
+            "Fuzzy taxa file must contain at least one of 'membership', 'importance', 'fuzzy_rank', or 'abundance' to compute top taxa"
+        )
+
+    if score_col == 'fuzzy_rank':
+        score_series = -score_series
+
+    working = fuzzy_matched.copy()
+    working['_composition_score'] = score_series.fillna(0.0)
+
+    if cluster_col is None:
+        matrix = pd.DataFrame([
+            working.groupby('taxon')['_composition_score'].max()
+        ], index=['Fuzzy taxa'])
+    else:
+        matrix = (
+            working.pivot_table(
+                index=cluster_col,
+                columns='taxon',
+                values='_composition_score',
+                aggfunc='max',
+                fill_value=0.0,
+            )
+            .sort_index()
+        )
+
+    matrix = matrix.fillna(0.0)
+    
+    if return_per_archetype:
+        comp = CompositionAnalyzer()
+        top_taxa_by_archetype = comp.analyze_top_taxa(
+            archetypes=matrix.to_numpy(),
+            feature_names=list(matrix.columns),
+            archetype_names=list(matrix.index),
+            num_taxa=num_taxa,
+        )
+        if logger:
+            logger.info(
+                "Computed composition-based top-%s taxa per archetype for %s archetype(s) using '%s'",
+                num_taxa,
+                len(top_taxa_by_archetype),
+                score_col,
+            )
+        return top_taxa_by_archetype
+    else:
+        taxa_mean_score = matrix.mean(axis=0).sort_values(ascending=False)
+        top_k_taxa = taxa_mean_score.head(num_taxa).index.tolist()
+        if logger:
+            logger.info(
+                "Computed globally top-%s taxa (mean score across %s archetype(s)) using '%s'",
+                num_taxa,
+                len(matrix),
+                score_col,
+            )
+        return top_k_taxa
 
 
 # ============================================================================
@@ -1432,6 +1700,193 @@ def run_boruta(
 
 
 # ============================================================================
+# MACHINE LEARNING: RF DIRECTION ANNOTATION
+# ============================================================================
+
+def compute_rf_direction_annotations(
+    X_log1p: pd.DataFrame,
+    X_raw: pd.DataFrame,
+    y: pd.Series,
+    rf_importance: pd.DataFrame,
+    abundance_delta_threshold: float = 0.0,
+    prevalence_delta_threshold: float = 0.0,
+    logger: Optional[logging.Logger] = None
+) -> pd.DataFrame:
+    """
+    Annotate RF features with direction information.
+    
+    For each taxon and each category (one-vs-rest):
+    - Compute abundance delta: mean_log1p_in_category - mean_log1p_out_category
+    - Compute prevalence delta: (count > 0 in cat) - (count > 0 out cat)
+    - Assign direction markers based on deltas
+    
+    Returns DataFrame with columns:
+    - taxon, mean_importance, selection_frequency
+    - For each unique category: [cat]_abundance_delta, [cat]_prevalence_delta, 
+      [cat]_direction_markers
+    """
+    if logger:
+        logger.info("Computing RF direction annotations")
+    
+    # Get unique categories
+    categories = sorted(y.unique())
+    
+    direction_list = []
+    
+    # For each taxon in RF importance
+    for _, row in rf_importance.iterrows():
+        taxon = row['taxon']
+        mean_importance = row['mean_importance']
+        selection_frequency = row['selection_frequency']
+        
+        taxon_data = {'taxon': taxon, 'mean_importance': mean_importance, 'selection_frequency': selection_frequency}
+        
+        # For each category, compute one-vs-rest direction
+        for category in categories:
+            in_cat_mask = (y == category)
+            out_cat_mask = ~in_cat_mask
+            
+            # Abundance metrics
+            mean_log1p_in = X_log1p.loc[in_cat_mask, taxon].mean()
+            mean_log1p_out = X_log1p.loc[out_cat_mask, taxon].mean()
+            abundance_delta = mean_log1p_in - mean_log1p_out
+            
+            # Prevalence metrics
+            prev_in = (X_raw.loc[in_cat_mask, taxon] > 0).sum() / in_cat_mask.sum()
+            prev_out = (X_raw.loc[out_cat_mask, taxon] > 0).sum() / out_cat_mask.sum()
+            prevalence_delta = prev_in - prev_out
+            
+            # Direction markers
+            markers = []
+            if abundance_delta > abundance_delta_threshold:
+                markers.append('positive_abundance_marker')
+            elif abundance_delta < -abundance_delta_threshold:
+                markers.append('negative_abundance_marker')
+            
+            if prevalence_delta > prevalence_delta_threshold:
+                markers.append('positive_prevalence_marker')
+            elif prevalence_delta < -prevalence_delta_threshold:
+                markers.append('negative_prevalence_marker')
+            
+            if not markers:
+                markers.append('ambiguous_marker')
+            
+            # Store results
+            cat_str = str(category).replace(' ', '_')
+            taxon_data[f'{cat_str}_abundance_delta'] = abundance_delta
+            taxon_data[f'{cat_str}_prevalence_delta'] = prevalence_delta
+            taxon_data[f'{cat_str}_direction_markers'] = '|'.join(markers)
+        
+        direction_list.append(taxon_data)
+    
+    direction_df = pd.DataFrame(direction_list)
+    
+    if logger:
+        logger.info(f"Direction annotations computed for {len(direction_df)} taxa and {len(categories)} categories")
+    
+    return direction_df
+
+
+def get_positive_markers(
+    direction_annotated_df: pd.DataFrame,
+    importance_threshold: float = 0.0,
+    abundance_delta_threshold: float = 0.0,
+    prevalence_delta_threshold: float = 0.0,
+    rule: str = 'abundance_or_prevalence',
+    logger: Optional[logging.Logger] = None
+) -> Dict[str, List[str]]:
+    """
+    Extract positive markers for each category from direction-annotated importance.
+    
+    Returns dict: {category: [taxon1, taxon2, ...]}
+    """
+    positive_markers = {}
+    
+    # Extract categories from column names
+    categories = set()
+    for col in direction_annotated_df.columns:
+        if col.endswith('_abundance_delta'):
+            cat = col.replace('_abundance_delta', '')
+            categories.add(cat)
+    
+    for category in sorted(categories):
+        markers = []
+        
+        for _, row in direction_annotated_df.iterrows():
+            if row['mean_importance'] < importance_threshold:
+                continue
+            
+            direction_col = f'{category}_direction_markers'
+            if direction_col not in row or pd.isna(row[direction_col]):
+                continue
+            
+            markers_str = row[direction_col]
+            
+            # Check if positive marker based on rule
+            is_positive = False
+            if rule == 'abundance_or_prevalence':
+                if 'positive_abundance_marker' in markers_str or 'positive_prevalence_marker' in markers_str:
+                    is_positive = True
+            elif rule == 'abundance_and_prevalence':
+                if 'positive_abundance_marker' in markers_str and 'positive_prevalence_marker' in markers_str:
+                    is_positive = True
+            
+            if is_positive:
+                markers.append(row['taxon'])
+        
+        positive_markers[category] = markers
+    
+    if logger:
+        logger.info(f"Extracted positive markers: {sum(len(m) for m in positive_markers.values())} total across {len(positive_markers)} categories")
+    
+    return positive_markers
+
+
+def get_negative_markers(
+    direction_annotated_df: pd.DataFrame,
+    importance_threshold: float = 0.0,
+    logger: Optional[logging.Logger] = None
+) -> Dict[str, List[str]]:
+    """
+    Extract negative markers (depletions/absences) for each category.
+    
+    Returns dict: {category: [taxon1, taxon2, ...]}
+    """
+    negative_markers = {}
+    
+    # Extract categories from column names
+    categories = set()
+    for col in direction_annotated_df.columns:
+        if col.endswith('_abundance_delta'):
+            cat = col.replace('_abundance_delta', '')
+            categories.add(cat)
+    
+    for category in sorted(categories):
+        markers = []
+        
+        for _, row in direction_annotated_df.iterrows():
+            if row['mean_importance'] < importance_threshold:
+                continue
+            
+            direction_col = f'{category}_direction_markers'
+            if direction_col not in row or pd.isna(row[direction_col]):
+                continue
+            
+            markers_str = row[direction_col]
+            
+            # Check if negative marker
+            if 'negative_abundance_marker' in markers_str or 'negative_prevalence_marker' in markers_str:
+                markers.append(row['taxon'])
+        
+        negative_markers[category] = markers
+    
+    if logger:
+        logger.info(f"Extracted negative markers: {sum(len(m) for m in negative_markers.values())} total across {len(negative_markers)} categories")
+    
+    return negative_markers
+
+
+# ============================================================================
 # COMPARISON: OVERLAP & PERMUTATION TESTS
 # ============================================================================
 
@@ -1633,7 +2088,9 @@ def run_ablation_analysis(
     random_seed: int = 123,
     n_estimators: int = 1000,
     n_jobs: int = -1,
-    logger: Optional[logging.Logger] = None
+    logger: Optional[logging.Logger] = None,
+    rf_importance: Optional[pd.DataFrame] = None,
+    fuzzy_matched: Optional[pd.DataFrame] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Run ablation analysis comparing different feature sets.
@@ -1645,19 +2102,53 @@ def run_ablation_analysis(
         logger.info("Running predictive ablation analysis")
     
     # Define feature sets
-    feature_sets = {
-        'fuzzy_taxa_only': fuzzy_taxa_list,
-        'all_taxa': list(X_log1p.columns),
-        'all_taxa_except_fuzzy': [t for t in X_log1p.columns if t not in fuzzy_taxa_list],
-        'external_consensus_only': external_consensus
-    }
+    feature_sets = {}
     
+    # Extract top-k fuzzy taxa per archetype using composition analyzer, then union
+    if fuzzy_matched is not None and not fuzzy_matched.empty:
+        for k in [5, 10, 15]:
+            top_k_taxa = []
+            try:
+                top_taxa_by_archetype = compute_composition_top_taxa(
+                    fuzzy_matched,
+                    k,
+                    logger,
+                    return_per_archetype=True,
+                )
+                # Union top-k taxa across all archetypes
+                for archetype_taxa in top_taxa_by_archetype:
+                    top_k_taxa.extend(
+                        [taxon for _, taxon in archetype_taxa if taxon != 'Others']
+                    )
+                # Remove duplicates while preserving order
+                seen = set()
+                top_k_taxa = [t for t in top_k_taxa if not (t in seen or seen.add(t))]
+            except ValueError as exc:
+                if logger:
+                    logger.warning(
+                        "Composition analyzer fallback unavailable for fuzzy taxa top-k extraction: %s",
+                        exc,
+                    )
+                top_k_taxa = fuzzy_matched['taxon'].head(k).tolist()
+            
+            if top_k_taxa:
+                feature_sets[f'fuzzy_top{k}'] = top_k_taxa
+    
+    # External consensus
+    feature_sets['external_consensus_only'] = external_consensus
+    
+    # All taxa
+    feature_sets['all_taxa'] = list(X_log1p.columns)
+    
+    # Add clinical covariates if provided
     if covariates_cols:
         feature_sets['clinical_covariates_only'] = covariates_cols
     
     # Ensure all features are in X
     for key in list(feature_sets.keys()):
         feature_sets[key] = [f for f in feature_sets[key] if f in X_log1p.columns]
+
+    feature_set_sizes = {key: len(value) for key, value in feature_sets.items()}
     
     ablation_metrics = []
     
@@ -1719,16 +2210,43 @@ def run_ablation_analysis(
             })
     
     ablation_long = pd.DataFrame(ablation_metrics)
-    
-    # Summary
-    ablation_summary = ablation_long.groupby('feature_set').agg({
-        'n_features': 'first',
-        'accuracy': ['mean', 'std', 'median'],
-        'balanced_accuracy': ['mean', 'std', 'median'],
-        'macro_f1': ['mean', 'std', 'median'],
-        'roc_auc': ['mean', 'std', 'median']
-    }).reset_index()
-    ablation_summary.columns = ['_'.join(col).strip('_') for col in ablation_summary.columns.values]
+
+    # Summary with stable feature-set coverage, even when a set has zero usable features.
+    summary_columns = [
+        'feature_set', 'n_features_first',
+        'accuracy_mean', 'accuracy_std', 'accuracy_median',
+        'balanced_accuracy_mean', 'balanced_accuracy_std', 'balanced_accuracy_median',
+        'macro_f1_mean', 'macro_f1_std', 'macro_f1_median',
+        'roc_auc_mean', 'roc_auc_std', 'roc_auc_median'
+    ]
+
+    if ablation_long.empty:
+        ablation_summary = pd.DataFrame(columns=summary_columns)
+    else:
+        ablation_summary = ablation_long.groupby('feature_set', as_index=False).agg(
+            n_features_first=('n_features', 'first'),
+            accuracy_mean=('accuracy', 'mean'),
+            accuracy_std=('accuracy', 'std'),
+            accuracy_median=('accuracy', 'median'),
+            balanced_accuracy_mean=('balanced_accuracy', 'mean'),
+            balanced_accuracy_std=('balanced_accuracy', 'std'),
+            balanced_accuracy_median=('balanced_accuracy', 'median'),
+            macro_f1_mean=('macro_f1', 'mean'),
+            macro_f1_std=('macro_f1', 'std'),
+            macro_f1_median=('macro_f1', 'median'),
+            roc_auc_mean=('roc_auc', 'mean'),
+            roc_auc_std=('roc_auc', 'std'),
+            roc_auc_median=('roc_auc', 'median')
+        )
+
+    expected_feature_sets = list(feature_sets.keys())
+    ablation_summary = pd.DataFrame({'feature_set': expected_feature_sets}).merge(
+        ablation_summary,
+        on='feature_set',
+        how='left'
+    )
+    ablation_summary['n_features_first'] = ablation_summary['feature_set'].map(feature_set_sizes).fillna(0).astype(int)
+    ablation_summary = ablation_summary[summary_columns]
     
     if logger:
         logger.info("Ablation analysis completed")
@@ -1852,6 +2370,7 @@ def compute_evidence_scores(
     boruta_summary: Optional[pd.DataFrame],
     consensus_taxa: List[str],
     direction_agreement: pd.DataFrame,
+    positive_markers: Optional[Dict[str, List[str]]] = None,
     alpha: float = 0.05,
     logger: Optional[logging.Logger] = None
 ) -> pd.DataFrame:
@@ -1861,11 +2380,14 @@ def compute_evidence_scores(
     Evidence is awarded for:
     - ANCOM-BC2 significant
     - ALDEx2 significant
-    - RF in top-N
-    - RF selection frequency >= 0.5
+    - RF as positive marker for matching category (direction-aware)
+    - RF-positive marker selection frequency >= 0.5
     - Boruta selected frequency >= 0.5
     - Direction agreement
     - In external consensus
+    
+    If positive_markers is provided, uses direction-aware RF evidence.
+    Otherwise, falls back to original RF importance-based scoring.
     """
     
     evidence_list = []
@@ -1900,18 +2422,32 @@ def compute_evidence_scores(
             if aldex2_sig:
                 score += 1
         
-        # RF
+        # RF - Use direction-aware positive markers if available
         rf_sig = False
-        rf_results = rf_importance[rf_importance['taxon'] == taxon]
-        if len(rf_results) > 0:
-            rf_sig = True
-            score += 1
-        
-        # RF selection frequency
         rf_freq = False
-        if len(rf_results) > 0 and rf_results.iloc[0]['selection_frequency'] >= 0.5:
-            rf_freq = True
-            score += 1
+        
+        if positive_markers is not None and isinstance(cluster, str) and cluster != 'NA':
+            # Direction-aware RF scoring
+            cat_str = str(cluster).replace(' ', '_')
+            if cat_str in positive_markers and taxon in positive_markers[cat_str]:
+                rf_sig = True
+                score += 1
+                
+                # Count frequency by checking how many times this taxon appears as marker
+                # For now, we count it as high frequency if it appears as a marker
+                rf_freq = True
+                score += 1
+        else:
+            # Fallback to original RF importance-based scoring
+            rf_results = rf_importance[rf_importance['taxon'] == taxon]
+            if len(rf_results) > 0:
+                rf_sig = True
+                score += 1
+                
+                # RF selection frequency
+                if rf_results.iloc[0]['selection_frequency'] >= 0.5:
+                    rf_freq = True
+                    score += 1
         
         # Boruta
         boruta_sig = False
@@ -1950,7 +2486,8 @@ def compute_evidence_scores(
             'fuzzy_membership_or_importance': importance,
             'ancombc2_supported': ancombc2_sig,
             'aldex2_supported': aldex2_sig,
-            'rf_supported': rf_sig,
+            'rf_positive_marker': rf_sig,
+            'rf_marker_frequency': rf_freq,
             'boruta_supported': boruta_sig,
             'direction_consistent': dir_agree,
             'evidence_score': score,
@@ -1958,8 +2495,23 @@ def compute_evidence_scores(
         })
     
     evidence_df = pd.DataFrame(evidence_list)
-    evidence_df = evidence_df.sort_values('evidence_score', ascending=False)
-    
+    expected_cols = [
+        'taxon', 'cluster', 'fuzzy_rank', 'fuzzy_membership_or_importance',
+        'ancombc2_supported', 'aldex2_supported', 'rf_positive_marker', 'rf_marker_frequency',
+        'boruta_supported', 'direction_consistent', 'evidence_score', 'evidence_label'
+    ]
+
+    # Ensure expected columns exist even if no evidence was found
+    for c in expected_cols:
+        if c not in evidence_df.columns:
+            evidence_df[c] = pd.Series(dtype='object')
+
+    if not evidence_df.empty and 'evidence_score' in evidence_df.columns:
+        evidence_df = evidence_df.sort_values('evidence_score', ascending=False)
+
+    # Reorder columns to a stable schema
+    evidence_df = evidence_df[[c for c in expected_cols if c in evidence_df.columns]]
+
     return evidence_df
 
 
@@ -1980,6 +2532,8 @@ def generate_report(
     overlap_summary: pd.DataFrame,
     ablation_summary: pd.DataFrame,
     evidence_scores: pd.DataFrame,
+    positive_markers: Optional[Dict[str, List[str]]] = None,
+    negative_markers: Optional[Dict[str, List[str]]] = None,
     logger: Optional[logging.Logger] = None
 ):
     """Generate comprehensive markdown report."""
@@ -2024,9 +2578,38 @@ def generate_report(
         f.write(f"### Random Forest\n\n")
         f.write(f"- **Mean balanced accuracy**: {rf_metrics['balanced_accuracy'].mean():.3f} ± {rf_metrics['balanced_accuracy'].std():.3f}\n")
         f.write(f"- **Mean ROC-AUC**: {rf_metrics['roc_auc'].mean():.3f} ± {rf_metrics['roc_auc'].std():.3f}\n")
-        f.write(f"- **Top 10 features**:\n\n")
-        for _, row in rf_importance.head(10).iterrows():
-            f.write(f"  - {row['taxon']}: {row['mean_importance']:.4f}\n")
+        f.write(f"- **Number of RF-important taxa**: {len(rf_importance)}\n")
+        
+        # Marker summary if available
+        if positive_markers is not None:
+            total_positive = sum(len(m) for m in positive_markers.values())
+            total_negative = sum(len(m) for m in negative_markers.values()) if negative_markers else 0
+            f.write(f"- **RF-positive marker taxa** (abundance/prevalence-enriched): {total_positive}\n")
+            for cat, markers in sorted(positive_markers.items()):
+                if markers:
+                    f.write(f"  - {cat}: {len(markers)} markers\n")
+            if negative_markers:
+                f.write(f"- **RF-negative marker taxa** (abundance/prevalence-depleted): {total_negative}\n")
+                for cat, markers in sorted(negative_markers.items()):
+                    if markers:
+                        f.write(f"  - {cat}: {len(markers)} markers\n")
+            f.write(f"\n**Note**: RF permutation importance is nondirectional (measures discriminative power).\n")
+            f.write(f"Positive markers are taxa enriched/abundant in a category (fair comparison for fuzzy clusters).\n")
+            f.write(f"Negative markers are taxa depleted/absent in a category (complementary depletion signals).\n\n")
+        
+        # Get fuzzy taxa set for marking
+        fuzzy_taxa_set = set(evidence_scores['taxon'].unique()) if evidence_scores is not None and not evidence_scores.empty else set()
+        n_fuzzy = len(fuzzy_taxa_set)
+        
+        f.write(f"- **Top {n_fuzzy} features** (matched to fuzzy taxa count):\n\n")
+        fuzzy_in_top = 0
+        for idx, row in rf_importance.head(n_fuzzy).iterrows():
+            in_fuzzy = "✓ (in fuzzy list)" if row['taxon'] in fuzzy_taxa_set else ""
+            f.write(f"  - {row['taxon']}: {row['mean_importance']:.4f} {in_fuzzy}\n")
+            if row['taxon'] in fuzzy_taxa_set:
+                fuzzy_in_top += 1
+        
+        f.write(f"\n- **Fuzzy coverage in top {n_fuzzy} RF features**: {fuzzy_in_top}/{n_fuzzy} ({100*fuzzy_in_top/n_fuzzy:.1f}%)\n")
         
         if boruta_summary is not None:
             f.write(f"\n### Boruta\n\n")
@@ -2040,8 +2623,19 @@ def generate_report(
         
         # Evidence Scores
         f.write("## 7. Evidence Scores\n\n")
-        f.write(evidence_scores[['taxon', 'cluster', 'ancombc2_supported', 'aldex2_supported', 'rf_supported', 'evidence_score', 'evidence_label']].head(30).to_markdown(index=False))
-        f.write("\n\n")
+        req_cols = ['taxon', 'cluster', 'ancombc2_supported', 'aldex2_supported', 'rf_supported', 'evidence_score', 'evidence_label']
+        if evidence_scores is None or evidence_scores.empty:
+            f.write("No evidence scores were generated (empty results).\n\n")
+        else:
+            missing = [c for c in req_cols if c not in evidence_scores.columns]
+            if missing:
+                f.write(f"Evidence scores missing expected columns: {missing}.\n\n")
+                # Write whatever is available
+                f.write(evidence_scores.head(30).to_markdown(index=False))
+                f.write("\n\n")
+            else:
+                f.write(evidence_scores[req_cols].head(30).to_markdown(index=False))
+                f.write("\n\n")
         
         f.write("---\n\nEnd of Report\n")
     
@@ -2079,7 +2673,7 @@ def save_software_versions(output_dir: Path, logger: Optional[logging.Logger] = 
         
         if HAS_BORUTA:
             import boruta
-            f.write(f"boruta: {boruta.__version__}\n")
+            # f.write(f"boruta: {boruta.__version__}\n")
         
         f.write("\nR version info:\n")
         try:
@@ -2176,7 +2770,136 @@ EXAMPLE USAGE:
     parser.add_argument('--alpha', type=float, default=0.05, help='Significance threshold')
     parser.add_argument('--force_log1p_for_da', action='store_true', help='Use log1p data for DA methods (not recommended)')
     
+    # Direction-aware RF options
+    parser.add_argument('--rf_importance_threshold', type=float, default=0, help='Min RF importance for marker consideration')
+    parser.add_argument('--direction_abundance_delta_threshold', type=float, default=0, help='Min abundance delta for direction')
+    parser.add_argument('--direction_prevalence_delta_threshold', type=float, default=0, help='Min prevalence delta for direction')
+    parser.add_argument('--positive_marker_rule', choices=['abundance_or_prevalence', 'abundance_and_prevalence'], default='abundance_or_prevalence', help='Rule for assigning positive markers')
+    
+    # Experiment skipping options
+    parser.set_defaults(skip_if_done=True)
+    parser.add_argument('--skip_if_done', dest='skip_if_done', action='store_true', help='Skip experiment if already completed (default: true)')
+    parser.add_argument('--force_rerun', dest='skip_if_done', action='store_false', help='Force re-run even if experiment already completed')
+    
     return parser.parse_args()
+
+
+# ============================================================================
+# EXPERIMENT COMPLETION CHECK
+# ============================================================================
+
+def is_experiment_done(output_dir: Path) -> bool:
+    """Check if an experiment has already completed.
+    
+    Args:
+        output_dir: Output directory to check
+    
+    Returns:
+        True if completion marker exists, False otherwise
+    """
+    completion_marker = output_dir / "COMPLETION_MARKER.txt"
+    return completion_marker.exists()
+
+
+def get_checkpoint_file(output_dir: Path, step_num: int, step_name: str) -> Path:
+    """Get the checkpoint marker file for a given step.
+    
+    Args:
+        output_dir: Output directory
+        step_num: Step number (1-19)
+        step_name: Human-readable step name
+    
+    Returns:
+        Path to checkpoint file
+    """
+    checkpoints_dir = output_dir / ".checkpoints"
+    checkpoints_dir.mkdir(exist_ok=True)
+    return checkpoints_dir / f"step_{step_num:02d}_{step_name.lower().replace(' ', '_')}.done"
+
+
+def should_skip_step(output_dir: Path, step_num: int, step_name: str, skip_if_done: bool) -> bool:
+    """Check if a step should be skipped.
+    
+    Args:
+        output_dir: Output directory
+        step_num: Step number
+        step_name: Step name
+        skip_if_done: Whether to skip if done
+    
+    Returns:
+        True if step should be skipped, False otherwise
+    """
+    if not skip_if_done:
+        return False
+    
+    checkpoint_file = get_checkpoint_file(output_dir, step_num, step_name)
+    if not checkpoint_file.exists():
+        return False
+
+    # If checkpoint contains an Outputs: section, verify each listed file exists.
+    try:
+        with open(checkpoint_file, 'r') as f:
+            lines = [l.strip() for l in f.readlines()]
+    except Exception:
+        return False
+
+    outputs_idx = None
+    for i, line in enumerate(lines):
+        if line.startswith('Outputs:'):
+            outputs_idx = i
+            break
+
+    if outputs_idx is None:
+        return True
+
+    missing = []
+    for out_line in lines[outputs_idx + 1:]:
+        if not out_line:
+            continue
+        # stored paths are relative to output_dir when possible
+        out_path = Path(out_line)
+        if not out_path.is_absolute():
+            out_path = output_dir / out_path
+        if not out_path.exists():
+            missing.append(str(out_path))
+
+    return len(missing) == 0
+
+
+def mark_step_done(output_dir: Path, step_num: int, step_name: str, logger, outputs: Optional[list] = None) -> None:
+    """Mark a step as completed by writing a checkpoint file.
+    
+    Args:
+        output_dir: Output directory
+        step_num: Step number
+        step_name: Step name
+        logger: Logger instance
+    """
+    checkpoint_file = get_checkpoint_file(output_dir, step_num, step_name)
+    tmp_file = checkpoint_file.with_suffix('.tmp')
+    with open(tmp_file, 'w') as f:
+        f.write(f"Step {step_num}: {step_name}\nCompleted at: {datetime.now()}\n")
+        if outputs:
+            f.write("Outputs:\n")
+            for p in outputs:
+                # store paths relative to output_dir when possible for portability
+                try:
+                    ppath = Path(p)
+                    if not ppath.is_absolute():
+                        ppath = Path(p)
+                    try:
+                        rel = ppath.relative_to(output_dir)
+                        f.write(f"{rel}\n")
+                    except Exception:
+                        f.write(f"{ppath}\n")
+                except Exception:
+                    f.write(f"{p}\n")
+    try:
+        tmp_file.replace(checkpoint_file)
+    except Exception:
+        # fallback to simple write
+        with open(checkpoint_file, 'w') as f:
+            f.write(open(tmp_file).read())
 
 
 # ============================================================================
@@ -2196,6 +2919,16 @@ def main():
     
     # Setup logging
     logger = setup_logging(output_dir)
+    
+    # Check if experiment is already done
+    if args.skip_if_done and is_experiment_done(output_dir):
+        logger.info("="*80)
+        logger.info("EXPERIMENT ALREADY COMPLETED")
+        logger.info("="*80)
+        logger.info(f"Output directory: {output_dir}")
+        logger.info("Skipping re-run (use --force_rerun to override)")
+        logger.info("="*80)
+        return 0
     logger.info("="*80)
     logger.info("MICROBIOME FUZZY TAXA VALIDATION PIPELINE")
     logger.info("="*80)
@@ -2348,7 +3081,24 @@ def main():
         logger.info("\n" + "="*80)
         logger.info("6. FUZZY TAXA LOADING & MATCHING")
         logger.info("="*80)
-        
+
+        if args.dataset and getattr(args, 'dataset_config', None):
+            try:
+                computed_top_taxa_path = compute_top_taxa_from_dataset_config(
+                    args.dataset_config,
+                    output_dir,
+                    logger,
+                )
+                args.top_taxa_file = str(computed_top_taxa_path)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to compute top taxa from archetypal results; using top_taxa_file instead: %s",
+                    exc,
+                )
+
+        if args.top_taxa_file is None:
+            raise ValueError("top_taxa_file is required when top taxa cannot be computed from dataset config.")
+
         fuzzy_taxa = load_top_taxa(Path(args.top_taxa_file), args.sep, logger)
         
         fuzzy_matched, fuzzy_unmatched_top, fuzzy_unmatched_otu = match_top_taxa(
@@ -2401,67 +3151,81 @@ def main():
         logger.info("8. DIFFERENTIAL ABUNDANCE: ANCOM-BC2")
         logger.info("="*80)
         
+        da_dir_path = output_dir / "differential_abundance"
+        combined_da_file = da_dir_path / "combined_da_results.tsv"
         covariates_list = None
-        if args.covariates:
-            covariates_list = [c.strip() for c in args.covariates.split(',')]
-            covariates_list = [c for c in covariates_list if c in metadata_aligned.columns]
         
-        if args.force_log1p_for_da:
-            logger.warning("!!! Using log1p-transformed data for DA methods (NOT RECOMMENDED) !!!")
-            otu_for_da = X_log1p
+        if should_skip_step(output_dir, 8, "ANCOM-BC2", args.skip_if_done):
+            logger.info("SKIPPING: Step 8 already completed")
+            if combined_da_file.exists():
+                da_results_combined = pd.read_csv(combined_da_file, sep='\t')
+                logger.info(f"Loaded combined DA results from {combined_da_file}")
+            else:
+                da_results_combined = pd.DataFrame(columns=DA_RESULT_COLUMNS)
         else:
-            otu_for_da = otu_filtered
-        
-        ancombc2_results = None
-        if args.run_ancombc2:
-            ancombc2_results = run_ancombc2(
-                otu_for_da,
-                metadata_aligned,
-                args.clinical_col,
-                output_dir,
-                covariates_list,
-                args.alpha,
-                logger
-            )
-        
-        # ====================================================================
-        # 9. DIFFERENTIAL ABUNDANCE - ALDEx2
-        # ====================================================================
-        logger.info("\n" + "="*80)
-        logger.info("9. DIFFERENTIAL ABUNDANCE: ALDEx2")
-        logger.info("="*80)
-        
-        aldex2_results = None
-        if args.run_aldex2:
-            aldex2_results = run_aldex2(
-                otu_for_da,
-                metadata_aligned,
-                args.clinical_col,
-                output_dir,
-                class_counts,
-                covariates_list,
-                args.alpha,
-                logger
-            )
-        
-        # Combine DA results
-        da_results_combined = []
-        if ancombc2_results is not None:
-            da_results_combined.append(ancombc2_results)
-        if aldex2_results is not None:
-            da_results_combined.append(aldex2_results)
-        
-        if len(da_results_combined) > 0:
-            da_results_combined = pd.concat(da_results_combined, ignore_index=True)
-        else:
-            da_results_combined = pd.DataFrame(columns=DA_RESULT_COLUMNS)
-        
-        if len(da_results_combined) > 0:
-            da_results_combined.to_csv(
-                output_dir / "differential_abundance" / "combined_da_results.tsv",
-                sep='\t',
-                index=False
-            )
+            if args.covariates:
+                covariates_list = [c.strip() for c in args.covariates.split(',')]
+                covariates_list = [c for c in covariates_list if c in metadata_aligned.columns]
+            
+            if args.force_log1p_for_da:
+                logger.warning("!!! Using log1p-transformed data for DA methods (NOT RECOMMENDED) !!!")
+                otu_for_da = X_log1p
+            else:
+                otu_for_da = otu_filtered
+            
+            ancombc2_results = None
+            if args.run_ancombc2:
+                ancombc2_results = run_ancombc2(
+                    otu_for_da,
+                    metadata_aligned,
+                    args.clinical_col,
+                    output_dir,
+                    covariates_list,
+                    args.alpha,
+                    logger
+                )
+            
+            # ====================================================================
+            # 9. DIFFERENTIAL ABUNDANCE - ALDEx2
+            # ====================================================================
+            logger.info("\n" + "="*80)
+            logger.info("9. DIFFERENTIAL ABUNDANCE: ALDEx2")
+            logger.info("="*80)
+            
+            aldex2_results = None
+            if args.run_aldex2:
+                aldex2_results = run_aldex2(
+                    otu_for_da,
+                    metadata_aligned,
+                    args.clinical_col,
+                    output_dir,
+                    class_counts,
+                    covariates_list,
+                    args.alpha,
+                    logger
+                )
+            
+            # Combine DA results
+            da_results_combined = []
+            if ancombc2_results is not None:
+                da_results_combined.append(ancombc2_results)
+            if aldex2_results is not None:
+                da_results_combined.append(aldex2_results)
+            
+            if len(da_results_combined) > 0:
+                da_results_combined = pd.concat(da_results_combined, ignore_index=True)
+            else:
+                da_results_combined = pd.DataFrame(columns=DA_RESULT_COLUMNS)
+            
+            if len(da_results_combined) > 0:
+                da_dir_path.mkdir(parents=True, exist_ok=True)
+                da_results_combined.to_csv(
+                    combined_da_file,
+                    sep='\t',
+                    index=False
+                )
+            
+            mark_step_done(output_dir, 8, "ANCOM-BC2", logger)
         
         # ====================================================================
         # 10. MACHINE LEARNING: RANDOM FOREST
@@ -2470,22 +3234,109 @@ def main():
         logger.info("10. MACHINE LEARNING: RANDOM FOREST")
         logger.info("="*80)
         
-        rf_metrics, rf_importance = run_random_forest(
+        ml_dir = output_dir / "ml" / "random_forest"
+        rf_metrics_file = ml_dir / "rf_resample_metrics.tsv"
+        rf_importance_file = ml_dir / "rf_permutation_importance_summary.tsv"
+        
+        if should_skip_step(output_dir, 10, "Random Forest", args.skip_if_done):
+            logger.info("SKIPPING: Step 10 already completed")
+            if rf_metrics_file.exists() and rf_importance_file.exists():
+                rf_metrics = pd.read_csv(rf_metrics_file, sep='\t')
+                rf_importance = pd.read_csv(rf_importance_file, sep='\t')
+                logger.info(f"Loaded RF metrics from {rf_metrics_file}")
+            else:
+                logger.warning("RF output files not found, will re-run step 10")
+                rf_metrics, rf_importance = run_random_forest(
+                    X_log1p,
+                    y_encoded,
+                    args.n_resamples,
+                    args.test_size,
+                    args.n_estimators,
+                    args.random_seed,
+                    args.n_jobs,
+                    logger
+                )
+                ml_dir.mkdir(parents=True, exist_ok=True)
+                rf_metrics.to_csv(rf_metrics_file, sep='\t', index=False)
+                rf_importance.to_csv(rf_importance_file, sep='\t', index=False)
+                mark_step_done(output_dir, 10, "Random Forest", logger, outputs=[rf_metrics_file, rf_importance_file])
+        else:
+            rf_metrics, rf_importance = run_random_forest(
+                X_log1p,
+                y_encoded,
+                args.n_resamples,
+                args.test_size,
+                args.n_estimators,
+                args.random_seed,
+                args.n_jobs,
+                logger
+            )
+            
+            ml_dir.mkdir(parents=True, exist_ok=True)
+            
+            rf_metrics.to_csv(rf_metrics_file, sep='\t', index=False)
+            rf_importance.to_csv(rf_importance_file, sep='\t', index=False)
+            
+            mark_step_done(output_dir, 10, "Random Forest", logger, outputs=[rf_metrics_file, rf_importance_file])
+        
+        # ====================================================================
+        # 10.5. MACHINE LEARNING: RF DIRECTION ANNOTATION
+        # ====================================================================
+        logger.info("\n" + "="*80)
+        logger.info("10.5. RF DIRECTION ANNOTATION")
+        logger.info("="*80)
+        
+        rf_direction_file = ml_dir / "rf_direction_annotated_importance.tsv"
+        rf_positive_markers_file = ml_dir / "rf_positive_markers_by_category.tsv"
+        rf_negative_markers_file = ml_dir / "rf_negative_markers_by_category.tsv"
+        
+        # Compute direction annotations
+        rf_direction_annotated = compute_rf_direction_annotations(
             X_log1p,
+            otu_filtered,  # raw counts
             y_encoded,
-            args.n_resamples,
-            args.test_size,
-            args.n_estimators,
-            args.random_seed,
-            args.n_jobs,
-            logger
+            rf_importance,
+            abundance_delta_threshold=args.direction_abundance_delta_threshold,
+            prevalence_delta_threshold=args.direction_prevalence_delta_threshold,
+            logger=logger
+        )
+        rf_direction_annotated.to_csv(rf_direction_file, sep='\t', index=False)
+        
+        # Extract positive and negative markers
+        positive_markers = get_positive_markers(
+            rf_direction_annotated,
+            importance_threshold=args.rf_importance_threshold,
+            abundance_delta_threshold=args.direction_abundance_delta_threshold,
+            prevalence_delta_threshold=args.direction_prevalence_delta_threshold,
+            rule=args.positive_marker_rule,
+            logger=logger
         )
         
-        ml_dir = output_dir / "ml" / "random_forest"
-        ml_dir.mkdir(parents=True, exist_ok=True)
+        negative_markers = get_negative_markers(
+            rf_direction_annotated,
+            importance_threshold=args.rf_importance_threshold,
+            logger=logger
+        )
         
-        rf_metrics.to_csv(ml_dir / "rf_resample_metrics.tsv", sep='\t', index=False)
-        rf_importance.to_csv(ml_dir / "rf_permutation_importance_summary.tsv", sep='\t', index=False)
+        # Save positive markers
+        positive_markers_list = []
+        for category, markers in positive_markers.items():
+            for marker in markers:
+                positive_markers_list.append({'category': category, 'taxon': marker})
+        positive_markers_df = pd.DataFrame(positive_markers_list)
+        positive_markers_df.to_csv(rf_positive_markers_file, sep='\t', index=False)
+        
+        # Save negative markers
+        negative_markers_list = []
+        for category, markers in negative_markers.items():
+            for marker in markers:
+                negative_markers_list.append({'category': category, 'taxon': marker})
+        negative_markers_df = pd.DataFrame(negative_markers_list)
+        negative_markers_df.to_csv(rf_negative_markers_file, sep='\t', index=False)
+        
+        logger.info(f"Saved direction annotations to {rf_direction_file}")
+        logger.info(f"Saved {len(positive_markers_df)} positive markers to {rf_positive_markers_file}")
+        logger.info(f"Saved {len(negative_markers_df)} negative markers to {rf_negative_markers_file}")
         
         # ====================================================================
         # 11. MACHINE LEARNING: BORUTA
@@ -2494,46 +3345,287 @@ def main():
         logger.info("11. MACHINE LEARNING: BORUTA")
         logger.info("="*80)
         
-        boruta_summary = None
         boruta_dir = output_dir / "ml" / "boruta"
-        boruta_dir.mkdir(parents=True, exist_ok=True)
+        boruta_file = boruta_dir / "boruta_summary.tsv"
+        boruta_skipped_file = boruta_dir / "boruta_skipped.txt"
         
-        if args.run_boruta:
-            if HAS_BORUTA:
-                boruta_summary = run_boruta(
-                    X_log1p,
-                    y_encoded,
-                    10,  # n_resamples for Boruta
-                    args.random_seed,
-                    args.n_jobs,
-                    logger
-                )
-                boruta_summary.to_csv(boruta_dir / "boruta_summary.tsv", sep='\t', index=False)
+        if should_skip_step(output_dir, 11, "Boruta", args.skip_if_done):
+            logger.info("SKIPPING: Step 11 already completed")
+            if boruta_file.exists():
+                boruta_summary = pd.read_csv(boruta_file, sep='\t')
+                logger.info(f"Loaded Boruta results from {boruta_file}")
             else:
-                logger.warning("BorutaPy not installed. Install with: pip install boruta")
-                with open(boruta_dir / "boruta_skipped.txt", 'w') as f:
-                    f.write("BorutaPy not installed.\nInstall with: pip install boruta\n")
+                boruta_summary = None
         else:
-            with open(boruta_dir / "boruta_skipped.txt", 'w') as f:
-                f.write("Boruta was not run (--run_boruta not specified)\n")
+            boruta_dir.mkdir(parents=True, exist_ok=True)
+            
+            boruta_summary = None
+            if args.run_boruta:
+                if HAS_BORUTA:
+                    boruta_summary = run_boruta(
+                        X_log1p,
+                        y_encoded,
+                        10,  # n_resamples for Boruta
+                        args.random_seed,
+                        args.n_jobs,
+                        logger
+                    )
+                    boruta_summary.to_csv(boruta_file, sep='\t', index=False)
+                else:
+                    logger.warning("BorutaPy not installed. Install with: pip install boruta")
+                    with open(boruta_skipped_file, 'w') as f:
+                        f.write("BorutaPy not installed.\nInstall with: pip install boruta\n")
+            else:
+                with open(boruta_skipped_file, 'w') as f:
+                    f.write("Boruta was not run (--run_boruta not specified)\n")
+            
+            mark_step_done(output_dir, 11, "Boruta", logger)
         
         # ====================================================================
-        # 12. COMPARISONS: OVERLAP & PERMUTATION TESTS
+        # 12-14. COMPARISONS: OVERLAP, RANK CORRELATION & DIRECTION
         # ====================================================================
         logger.info("\n" + "="*80)
-        logger.info("12. OVERLAP & PERMUTATION TESTS")
+        logger.info("12-14. COMPARISONS: OVERLAP, RANK CORRELATION & DIRECTION")
         logger.info("="*80)
         
         comparison_dir = output_dir / "comparison"
-        comparison_dir.mkdir(parents=True, exist_ok=True)
+        overlap_file = comparison_dir / "overlap_summary.tsv"
+        rank_corr_file = comparison_dir / "rank_correlation_summary.tsv"
+        direction_agreement_file = comparison_dir / "direction_agreement.tsv"
         
+        if should_skip_step(output_dir, 12, "Comparisons", args.skip_if_done):
+            logger.info("SKIPPING: Steps 12-14 already completed")
+            overlap_summary = pd.read_csv(overlap_file, sep='\t') if overlap_file.exists() else pd.DataFrame()
+            rank_corr_df = pd.read_csv(rank_corr_file, sep='\t') if rank_corr_file.exists() else pd.DataFrame()
+            direction_agreement = pd.read_csv(direction_agreement_file, sep='\t') if direction_agreement_file.exists() else pd.DataFrame()
+        else:
+            comparison_dir.mkdir(parents=True, exist_ok=True)
+            
+            # ====================================================================
+            # 12. COMPARISONS: OVERLAP & PERMUTATION TESTS
+            # ====================================================================
+            logger.info("\n" + "="*80)
+            logger.info("12. OVERLAP & PERMUTATION TESTS")
+            logger.info("="*80)
+            
+            fuzzy_taxa_set = set(fuzzy_matched['taxon'])
+            all_taxa_universe = set(otu_filtered.columns)
+            
+            # Get significant taxa from each method
+            ancombc2_sig = set()
+            aldex2_sig = set()
+            
+            if len(da_results_combined) > 0:
+                ancombc2_sig = set(
+                    da_results_combined[
+                        (da_results_combined['method'] == 'ancombc2') &
+                        (da_results_combined['significant'])
+                    ]['taxon']
+                )
+                aldex2_sig = set(
+                    da_results_combined[
+                        (da_results_combined['method'] == 'aldex2') &
+                        (da_results_combined['significant'])
+                    ]['taxon']
+                )
+            
+            # Compute overlaps with DA and Boruta (nondirectional methods)
+            overlap_results = []
+            
+            methods = {
+                'ANCOM-BC2': ancombc2_sig,
+                'ALDEx2': aldex2_sig
+            }
+            
+            # Boruta selected
+            boruta_selected = set()
+            if boruta_summary is not None:
+                boruta_selected = set(boruta_summary[boruta_summary['selection_frequency'] >= 0.5]['taxon'])
+                if boruta_selected:
+                    methods['Boruta'] = boruta_selected
+            
+            for method_name, method_taxa in methods.items():
+                if len(method_taxa) == 0:
+                    continue
+                
+                metrics = compute_overlap_metrics(
+                    fuzzy_taxa_set,
+                    method_taxa,
+                    all_taxa_universe,
+                    args.n_permutations,
+                    args.random_seed,
+                    logger
+                )
+                metrics['method'] = method_name
+                metrics['overlap_type'] = 'differential_abundance'
+                overlap_results.append(metrics)
+            
+            # Add positive marker overlaps (fair comparison) as main RF comparison
+            logger.info("\nComputing RF positive marker overlaps (direction-aware)...")
+            positive_marker_overlap_results = []
+            
+            # Get unique categories from fuzzy taxa
+            fuzzy_categories = fuzzy_matched['cluster'].unique() if 'cluster' in fuzzy_matched.columns else [None]
+            
+            for category in fuzzy_categories:
+                if pd.isna(category):
+                    continue
+                
+                # Get fuzzy taxa for this category
+                fuzzy_in_cat = set(fuzzy_matched[fuzzy_matched['cluster'] == category]['taxon'])
+                if len(fuzzy_in_cat) == 0:
+                    continue
+                
+                # Get RF-positive markers for this category
+                cat_str = str(category).replace(' ', '_')
+                pos_markers_for_cat = set()
+                if cat_str in positive_markers:
+                    pos_markers_for_cat = set(positive_markers[cat_str])
+                
+                if len(pos_markers_for_cat) == 0:
+                    logger.warning(f"No RF-positive markers found for category: {category}")
+                    continue
+                
+                # Compute overlap
+                metrics = compute_overlap_metrics(
+                    fuzzy_in_cat,
+                    pos_markers_for_cat,
+                    all_taxa_universe,
+                    args.n_permutations,
+                    args.random_seed,
+                    logger
+                )
+                metrics['method'] = f'RF-positive-markers'
+                metrics['category'] = category
+                metrics['overlap_type'] = 'direction_aware'
+                positive_marker_overlap_results.append(metrics)
+            
+            # Combine overlap results
+            overlap_summary = pd.DataFrame(overlap_results)
+            if len(positive_marker_overlap_results) > 0:
+                positive_marker_overlap_df = pd.DataFrame(positive_marker_overlap_results)
+                overlap_summary = pd.concat([overlap_summary, positive_marker_overlap_df], ignore_index=True)
+            
+            overlap_summary.to_csv(comparison_dir / "overlap_summary.tsv", sep='\t', index=False)
+            
+            if len(positive_marker_overlap_results) > 0:
+                positive_marker_overlap_df.to_csv(comparison_dir / "positive_marker_overlap_summary.tsv", sep='\t', index=False)
+            
+            # Compute negative marker complementarity
+            logger.info("\nComputing negative marker complementarity...")
+            complementarity_results = []
+            
+            for category in fuzzy_categories:
+                if pd.isna(category):
+                    continue
+                
+                # Get fuzzy taxa for this category
+                fuzzy_in_cat = set(fuzzy_matched[fuzzy_matched['cluster'] == category]['taxon'])
+                if len(fuzzy_in_cat) == 0:
+                    continue
+                
+                # Get RF-negative markers for this category
+                cat_str = str(category).replace(' ', '_')
+                neg_markers_for_cat = set()
+                if cat_str in negative_markers:
+                    neg_markers_for_cat = set(negative_markers[cat_str])
+                
+                if len(neg_markers_for_cat) > 0:
+                    # Compute complementarity (how different are fuzzy and negative markers)
+                    n_overlap = len(fuzzy_in_cat & neg_markers_for_cat)
+                    complementarity = 1.0 - (n_overlap / len(fuzzy_in_cat)) if len(fuzzy_in_cat) > 0 else 0
+                    
+                    complementarity_results.append({
+                        'category': category,
+                        'n_fuzzy_taxa': len(fuzzy_in_cat),
+                        'n_rf_negative_markers': len(neg_markers_for_cat),
+                        'n_overlap_with_negative': n_overlap,
+                        'complementarity_score': complementarity,
+                        'overlap_taxa': ','.join(fuzzy_in_cat & neg_markers_for_cat)
+                    })
+            
+            if len(complementarity_results) > 0:
+                complementarity_df = pd.DataFrame(complementarity_results)
+                complementarity_df.to_csv(comparison_dir / "negative_marker_complementarity.tsv", sep='\t', index=False)
+            
+            # ====================================================================
+            # 13. COMPARISONS: RANK CORRELATION
+            # ====================================================================
+            logger.info("\n" + "="*80)
+            logger.info("13. RANK CORRELATION")
+            logger.info("="*80)
+            
+            rank_corr_results = []
+            
+            # Build ranking dictionaries
+            fuzzy_rank_dict = {}
+            for _, row in fuzzy_matched.iterrows():
+                taxon = row['taxon']
+                rank = row.get('fuzzy_rank', row.get('membership', row.get('importance', np.nan)))
+                if pd.notna(rank):
+                    fuzzy_rank_dict[taxon] = rank
+                else:
+                    fuzzy_rank_dict[taxon] = 1  # Default rank
+            
+            if len(da_results_combined) > 0:
+                for method in ['ancombc2', 'aldex2']:
+                    method_data = da_results_combined[da_results_combined['method'] == method]
+                    if len(method_data) == 0:
+                        continue
+                    
+                    method_rank_dict = {}
+                    for _, row in method_data.iterrows():
+                        method_rank_dict[row['taxon']] = abs(row['effect_size']) if pd.notna(row['effect_size']) else np.inf
+                    
+                    corr, pval, n_overlap = compute_rank_correlation(fuzzy_rank_dict, method_rank_dict, logger)
+                    
+                    rank_corr_results.append({
+                        'method': method.upper(),
+                        'correlation': corr,
+                        'p_value': pval,
+                        'n_overlapping': n_overlap
+                    })
+            
+            if len(rf_importance) > 0:
+                rf_rank_dict = {row['taxon']: row['mean_importance'] for _, row in rf_importance.iterrows()}
+                corr, pval, n_overlap = compute_rank_correlation(fuzzy_rank_dict, rf_rank_dict, logger)
+                rank_corr_results.append({
+                    'method': 'RF',
+                    'correlation': corr,
+                    'p_value': pval,
+                    'n_overlapping': n_overlap
+                })
+            
+            if len(rank_corr_results) > 0:
+                rank_corr_df = pd.DataFrame(rank_corr_results)
+                rank_corr_df.to_csv(comparison_dir / "rank_correlation_summary.tsv", sep='\t', index=False)
+            
+            # ====================================================================
+            # 14. COMPARISONS: DIRECTION AGREEMENT
+            # ====================================================================
+            logger.info("\n" + "="*80)
+            logger.info("14. DIRECTION AGREEMENT")
+            logger.info("="*80)
+            
+            direction_agreement = pd.DataFrame(columns=DIRECTION_AGREEMENT_COLUMNS)
+            if len(da_results_combined) > 0:
+                direction_agreement = compute_direction_agreement(
+                    X_log1p,
+                    y_encoded,
+                    da_results_combined,
+                    fuzzy_matched,
+                    args.alpha,
+                    logger
+                )
+                direction_agreement.to_csv(comparison_dir / "direction_agreement.tsv", sep='\t', index=False)
+            
+            mark_step_done(output_dir, 12, "Comparisons", logger)
+
         fuzzy_taxa_set = set(fuzzy_matched['taxon'])
         all_taxa_universe = set(otu_filtered.columns)
-        
-        # Get significant taxa from each method
+
         ancombc2_sig = set()
         aldex2_sig = set()
-        
         if len(da_results_combined) > 0:
             ancombc2_sig = set(
                 da_results_combined[
@@ -2547,120 +3639,21 @@ def main():
                     (da_results_combined['significant'])
                 ]['taxon']
             )
-        
-        # RF top-N where N = number of fuzzy taxa
+
         rf_top_n = int(len(fuzzy_taxa_set))
         rf_top_taxa = set(rf_importance.head(rf_top_n)['taxon'])
-        
-        # RF selected by frequency
         rf_selected = set(rf_importance[rf_importance['selection_frequency'] >= 0.5]['taxon'])
-        
-        # Boruta selected
+
         boruta_selected = set()
         if boruta_summary is not None:
             boruta_selected = set(boruta_summary[boruta_summary['selection_frequency'] >= 0.5]['taxon'])
-        
-        # Compute overlaps
-        overlap_results = []
-        
-        methods = {
-            'ANCOM-BC2': ancombc2_sig,
-            'ALDEx2': aldex2_sig,
-            f'RF-top{rf_top_n}': rf_top_taxa,
-            'RF-selected': rf_selected
-        }
-        
-        if boruta_selected:
-            methods['Boruta'] = boruta_selected
-        
-        for method_name, method_taxa in methods.items():
-            if len(method_taxa) == 0:
-                continue
-            
-            metrics = compute_overlap_metrics(
-                fuzzy_taxa_set,
-                method_taxa,
-                all_taxa_universe,
-                args.n_permutations,
-                args.random_seed,
-                logger
-            )
-            metrics['method'] = method_name
-            overlap_results.append(metrics)
-        
-        overlap_summary = pd.DataFrame(overlap_results)
-        overlap_summary.to_csv(comparison_dir / "overlap_summary.tsv", sep='\t', index=False)
-        
-        # ====================================================================
-        # 13. COMPARISONS: RANK CORRELATION
-        # ====================================================================
-        logger.info("\n" + "="*80)
-        logger.info("13. RANK CORRELATION")
-        logger.info("="*80)
-        
-        rank_corr_results = []
-        
-        # Build ranking dictionaries
-        fuzzy_rank_dict = {}
-        for _, row in fuzzy_matched.iterrows():
-            taxon = row['taxon']
-            rank = row.get('fuzzy_rank', row.get('membership', row.get('importance', np.nan)))
-            if pd.notna(rank):
-                fuzzy_rank_dict[taxon] = rank
-            else:
-                fuzzy_rank_dict[taxon] = 1  # Default rank
-        
-        if len(da_results_combined) > 0:
-            for method in ['ancombc2', 'aldex2']:
-                method_data = da_results_combined[da_results_combined['method'] == method]
-                if len(method_data) == 0:
-                    continue
-                
-                method_rank_dict = {}
-                for _, row in method_data.iterrows():
-                    method_rank_dict[row['taxon']] = abs(row['effect_size']) if pd.notna(row['effect_size']) else np.inf
-                
-                corr, pval, n_overlap = compute_rank_correlation(fuzzy_rank_dict, method_rank_dict, logger)
-                
-                rank_corr_results.append({
-                    'method': method.upper(),
-                    'correlation': corr,
-                    'p_value': pval,
-                    'n_overlapping': n_overlap
-                })
-        
-        if len(rf_importance) > 0:
-            rf_rank_dict = {row['taxon']: row['mean_importance'] for _, row in rf_importance.iterrows()}
-            corr, pval, n_overlap = compute_rank_correlation(fuzzy_rank_dict, rf_rank_dict, logger)
-            rank_corr_results.append({
-                'method': 'RF',
-                'correlation': corr,
-                'p_value': pval,
-                'n_overlapping': n_overlap
-            })
-        
-        if len(rank_corr_results) > 0:
-            rank_corr_df = pd.DataFrame(rank_corr_results)
-            rank_corr_df.to_csv(comparison_dir / "rank_correlation_summary.tsv", sep='\t', index=False)
-        
-        # ====================================================================
-        # 14. COMPARISONS: DIRECTION AGREEMENT
-        # ====================================================================
-        logger.info("\n" + "="*80)
-        logger.info("14. DIRECTION AGREEMENT")
-        logger.info("="*80)
-        
-        direction_agreement = pd.DataFrame(columns=DIRECTION_AGREEMENT_COLUMNS)
-        if len(da_results_combined) > 0:
-            direction_agreement = compute_direction_agreement(
-                X_log1p,
-                y_encoded,
-                da_results_combined,
-                fuzzy_matched,
-                args.alpha,
-                logger
-            )
-            direction_agreement.to_csv(comparison_dir / "direction_agreement.tsv", sep='\t', index=False)
+
+        if 'overlap_summary' not in locals():
+            overlap_summary = pd.DataFrame()
+        if 'rank_corr_df' not in locals():
+            rank_corr_df = pd.DataFrame()
+        if 'direction_agreement' not in locals():
+            direction_agreement = pd.DataFrame(columns=DIRECTION_AGREEMENT_COLUMNS)
         
         # ====================================================================
         # 15. EXTERNAL CONSENSUS
@@ -2702,40 +3695,91 @@ def main():
         logger.info("16. PREDICTIVE ABLATION")
         logger.info("="*80)
         
-        covariates_for_ablation = None
-        if covariates_list:
-            # Check if covariates are numeric
-            numeric_covariates = []
-            for cov in covariates_list:
-                if cov in X_log1p.columns or cov in metadata_aligned.columns:
-                    try:
-                        pd.to_numeric(metadata_aligned[cov])
-                        numeric_covariates.append(cov)
-                    except:
-                        pass
-            if numeric_covariates:
-                covariates_for_ablation = numeric_covariates
-        
-        ablation_long, ablation_summary = run_ablation_analysis(
-            X_log1p,
-            y_encoded,
-            list(fuzzy_taxa_set),
-            list(rf_top_taxa),
-            consensus_taxa,
-            covariates_for_ablation,
-            args.n_resamples,
-            args.test_size,
-            args.random_seed,
-            args.n_estimators,
-            args.n_jobs,
-            logger
-        )
-        
         ablation_dir = output_dir / "ablation"
-        ablation_dir.mkdir(parents=True, exist_ok=True)
+        ablation_long_file = ablation_dir / "ablation_metrics_long.tsv"
+        ablation_summary_file = ablation_dir / "ablation_metrics_summary.tsv"
         
-        ablation_long.to_csv(ablation_dir / "ablation_metrics_long.tsv", sep='\t', index=False)
-        ablation_summary.to_csv(ablation_dir / "ablation_metrics_summary.tsv", sep='\t', index=False)
+        if should_skip_step(output_dir, 16, "Ablation", args.skip_if_done):
+            logger.info("SKIPPING: Step 16 already completed")
+            if ablation_long_file.exists() and ablation_summary_file.exists():
+                ablation_long = pd.read_csv(ablation_long_file, sep='\t')
+                ablation_summary = pd.read_csv(ablation_summary_file, sep='\t')
+                logger.info(f"Loaded ablation results from {ablation_long_file}")
+            else:
+                logger.warning("Ablation output files not found, will re-run step 16")
+                # Re-run ablation
+                covariates_for_ablation = None
+                if 'covariates_list' in locals() and covariates_list:
+                    # Check if covariates are numeric
+                    numeric_covariates = []
+                    for cov in covariates_list:
+                        if cov in X_log1p.columns or cov in metadata_aligned.columns:
+                            try:
+                                pd.to_numeric(metadata_aligned[cov])
+                                numeric_covariates.append(cov)
+                            except:
+                                pass
+                    if numeric_covariates:
+                        covariates_for_ablation = numeric_covariates
+                
+                ablation_long, ablation_summary = run_ablation_analysis(
+                    X_log1p,
+                    y_encoded,
+                    list(fuzzy_taxa_set),
+                    list(rf_top_taxa),
+                    consensus_taxa,
+                    covariates_for_ablation,
+                    args.n_resamples,
+                    args.test_size,
+                    args.random_seed,
+                    args.n_estimators,
+                    args.n_jobs,
+                    logger,
+                    rf_importance,
+                    fuzzy_matched
+                )
+                ablation_dir.mkdir(parents=True, exist_ok=True)
+                ablation_long.to_csv(ablation_long_file, sep='\t', index=False)
+                ablation_summary.to_csv(ablation_summary_file, sep='\t', index=False)
+                mark_step_done(output_dir, 16, "Ablation", logger)
+        else:
+            covariates_for_ablation = None
+            if 'covariates_list' in locals() and covariates_list:
+                # Check if covariates are numeric
+                numeric_covariates = []
+                for cov in covariates_list:
+                    if cov in X_log1p.columns or cov in metadata_aligned.columns:
+                        try:
+                            pd.to_numeric(metadata_aligned[cov])
+                            numeric_covariates.append(cov)
+                        except:
+                            pass
+                if numeric_covariates:
+                    covariates_for_ablation = numeric_covariates
+            
+            ablation_long, ablation_summary = run_ablation_analysis(
+                X_log1p,
+                y_encoded,
+                list(fuzzy_taxa_set),
+                list(rf_top_taxa),
+                consensus_taxa,
+                covariates_for_ablation,
+                args.n_resamples,
+                args.test_size,
+                args.random_seed,
+                args.n_estimators,
+                args.n_jobs,
+                logger,
+                rf_importance,
+                fuzzy_matched
+            )
+            
+            ablation_dir.mkdir(parents=True, exist_ok=True)
+            
+            ablation_long.to_csv(ablation_long_file, sep='\t', index=False)
+            ablation_summary.to_csv(ablation_summary_file, sep='\t', index=False)
+            
+            mark_step_done(output_dir, 16, "Ablation", logger)
         
         # ====================================================================
         # 17. EVIDENCE SCORING
@@ -2744,18 +3788,60 @@ def main():
         logger.info("17. EVIDENCE SCORING")
         logger.info("="*80)
         
-        evidence_scores = compute_evidence_scores(
-            fuzzy_matched,
-            da_results_combined,
-            rf_importance,
-            boruta_summary,
-            consensus_taxa,
-            direction_agreement,
-            args.alpha,
-            logger
-        )
+        evidence_score_file = comparison_dir / "fuzzy_taxa_evidence_score.tsv"
         
-        evidence_scores.to_csv(comparison_dir / "fuzzy_taxa_evidence_score.tsv", sep='\t', index=False)
+        if should_skip_step(output_dir, 17, "Evidence Scoring", args.skip_if_done):
+            logger.info("SKIPPING: Step 17 already completed")
+            need_rerun = False
+            if not evidence_score_file.exists():
+                logger.warning("Evidence score file not found, will re-run step 17")
+                need_rerun = True
+            else:
+                try:
+                    if evidence_score_file.stat().st_size == 0:
+                        logger.warning("Evidence score file is empty, will re-run step 17")
+                        need_rerun = True
+                    else:
+                        try:
+                            evidence_scores = pd.read_csv(evidence_score_file, sep='\t')
+                            logger.info(f"Loaded evidence scores from {evidence_score_file}")
+                        except pd.errors.EmptyDataError:
+                            logger.warning("Evidence score file contains no data columns, will re-run step 17")
+                            need_rerun = True
+                except Exception as e:
+                    logger.warning(f"Could not read evidence score file metadata: {e}; will re-run step 17")
+                    need_rerun = True
+
+            if need_rerun:
+                evidence_scores = compute_evidence_scores(
+                    fuzzy_matched,
+                    da_results_combined,
+                    rf_importance,
+                    boruta_summary,
+                    consensus_taxa,
+                    direction_agreement,
+                    positive_markers=positive_markers,
+                    alpha=args.alpha,
+                    logger=logger
+                )
+                evidence_scores.to_csv(evidence_score_file, sep='\t', index=False)
+                mark_step_done(output_dir, 17, "Evidence Scoring", logger, outputs=[evidence_score_file])
+        else:
+            evidence_scores = compute_evidence_scores(
+                fuzzy_matched,
+                da_results_combined,
+                rf_importance,
+                boruta_summary,
+                consensus_taxa,
+                direction_agreement,
+                positive_markers=positive_markers,
+                alpha=args.alpha,
+                logger=logger
+            )
+            
+            evidence_scores.to_csv(evidence_score_file, sep='\t', index=False)
+            
+            mark_step_done(output_dir, 17, "Evidence Scoring", logger)
         
         # ====================================================================
         # 18. PLOTTING
@@ -2765,35 +3851,42 @@ def main():
         logger.info("="*80)
         
         plots_dir = output_dir / "plots"
-        plots_dir.mkdir(parents=True, exist_ok=True)
+        plots_complete_marker = plots_dir / ".plots_complete"
         
-        # DA volcano plots
-        if len(da_results_combined) > 0:
-            for method in ['ancombc2', 'aldex2']:
-                method_data = da_results_combined[da_results_combined['method'] == method]
-                if len(method_data) > 0:
-                    plot_da_volcano(
-                        method_data,
-                        method.upper(),
-                        plots_dir / f"da_volcano_{method}.png",
-                        args.alpha,
-                        logger
-                    )
-        
-        # RF importance
-        plot_rf_importance(
-            rf_importance,
-            min(20, len(rf_importance)),
-            plots_dir / "rf_top_permutation_importance.png",
-            logger
-        )
-        
-        # Ablation
-        plot_ablation_comparison(
-            ablation_long,
-            plots_dir / "ablation_performance_boxplot.png",
-            logger
-        )
+        if should_skip_step(output_dir, 18, "Plotting", args.skip_if_done):
+            logger.info("SKIPPING: Step 18 already completed")
+        else:
+            plots_dir.mkdir(parents=True, exist_ok=True)
+            
+            # DA volcano plots
+            if len(da_results_combined) > 0:
+                for method in ['ancombc2', 'aldex2']:
+                    method_data = da_results_combined[da_results_combined['method'] == method]
+                    if len(method_data) > 0:
+                        plot_da_volcano(
+                            method_data,
+                            method.upper(),
+                            plots_dir / f"da_volcano_{method}.png",
+                            args.alpha,
+                            logger
+                        )
+            
+            # RF importance
+            plot_rf_importance(
+                rf_importance,
+                min(20, len(rf_importance)),
+                plots_dir / "rf_top_permutation_importance.png",
+                logger
+            )
+            
+            # Ablation
+            plot_ablation_comparison(
+                ablation_long,
+                plots_dir / "ablation_performance_boxplot.png",
+                logger
+            )
+            
+            mark_step_done(output_dir, 18, "Plotting", logger)
         
         # ====================================================================
         # 19. GENERATE REPORT
@@ -2822,7 +3915,9 @@ def main():
             overlap_summary if len(overlap_summary) > 0 else pd.DataFrame(),
             ablation_summary,
             evidence_scores,
-            logger
+            positive_markers=positive_markers if 'positive_markers' in locals() else None,
+            negative_markers=negative_markers if 'negative_markers' in locals() else None,
+            logger=logger
         )
         
         # ====================================================================
@@ -2833,6 +3928,12 @@ def main():
         logger.info("="*80)
         logger.info(f"Output directory: {output_dir}")
         logger.info(f"End time: {datetime.now()}")
+        
+        # Write completion marker
+        completion_marker = output_dir / "COMPLETION_MARKER.txt"
+        with open(completion_marker, 'w') as f:
+            f.write(f"Experiment completed at {datetime.now()}\n")
+        logger.info(f"Completion marker written: {completion_marker}")
         
         return 0
         

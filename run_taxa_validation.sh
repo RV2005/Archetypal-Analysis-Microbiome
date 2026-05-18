@@ -10,15 +10,20 @@
 source /opt/miniconda3/bin/activate
 conda activate GHG_work
 
-DATASET="${DATASET:-sample_type}"
+DATASET="dog"
 DATASET_CONFIG_FILE="${DATASET_CONFIG_FILE:-dataset_configs.json}"
 OUTPUT_DIR="${OUTPUT_DIR:-./results_validate_fuzzy_taxa/${DATASET}}"
+FORCE_RERUN="--force_rerun"  # Set to --force_rerun to override skip-if-done
 
 python_cmd="python microbiome_validate_fuzzy_taxa.py \
   --dataset ${DATASET} \
   --dataset_config_file ${DATASET_CONFIG_FILE} \
   --output_dir ${OUTPUT_DIR} \
-  --random_seed 123
+  --random_seed 42 \
+  --skip_ancombc2 \
+  --skip_aldex2 \
+  ${FORCE_RERUN}
+
 "
 
 # Echo running command for logging
