@@ -120,7 +120,8 @@ class AnalysisMetrics:
                                  metadata_column: str,
                                  discretize: bool = False,
                                  buckets: Optional[List[Tuple[float, float]]] = None, 
-                                 metrics: List[str] = None) -> pd.DataFrame:
+                                 metrics: List[str] = None, 
+                                 drop_nan=False) -> pd.DataFrame:
         """
         Compare archetype quality across different K values.
         
@@ -158,6 +159,10 @@ class AnalysisMetrics:
             
             # Get labels for evaluation
             common_samples = similarity_degree.index.intersection(metadata.index)
+            # Drop samples with NaN labels if requested
+            if drop_nan:
+                common_samples = common_samples[~metadata.loc[common_samples, metadata_column].isna()]
+            
             eval_similarity = similarity_degree.loc[common_samples]
             eval_labels = metadata.loc[common_samples, metadata_column]
             

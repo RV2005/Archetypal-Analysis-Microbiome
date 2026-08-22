@@ -71,7 +71,10 @@ class CompositionAnalyzer:
         
         return top_taxa_archetypes
     
-    def simplify_taxa_names(self, taxa_names: List[str], max_length: int = 20) -> Dict[str, str]:
+    def simplify_taxa_names(self,
+                            taxa_names: List[str],
+                            max_length: int = 20,
+                            simplified_taxa_level: int = -1) -> Dict[str, str]:
         """
         Simplify taxonomic names for better readability.
         
@@ -81,6 +84,9 @@ class CompositionAnalyzer:
             Original taxonomic names
         max_length : int
             Maximum length for simplified names
+        simplified_taxa_level : int
+            Taxonomic level index after splitting by ".".
+            If -1 (default), use the last part.
             
         Returns:
         --------
@@ -99,7 +105,12 @@ class CompositionAnalyzer:
             parts = [part for part in parts if part and part not in ["NA", "unknown", "unclassified", "."]]
             
             if parts:
-                simplified = parts[-1]
+                if simplified_taxa_level == -1:
+                    simplified = parts[-1]
+                elif 0 <= simplified_taxa_level < len(parts):
+                    simplified = parts[simplified_taxa_level]
+                else:
+                    simplified = parts[-1]
             else:
                 simplified = taxa_name
             
@@ -203,7 +214,8 @@ class CompositionAnalyzer:
                                figsize: Tuple[int, int] = (12, 8),
                                sort_by_contribution: bool = True,
                                simplify_names: bool = True,
-                              max_name_length: int = 20) -> Tuple[plt.Figure, plt.Axes]:
+                               max_name_length: int = 20,
+                               simplified_taxa_level: int = -1) -> Tuple[plt.Figure, plt.Axes]:
         """
         Combined stacked bar chart for all archetypes.
         
@@ -223,6 +235,9 @@ class CompositionAnalyzer:
             Whether to simplify taxonomic names
         max_name_length : int
             Maximum length for taxa names
+        simplified_taxa_level : int
+            Taxonomic level index after splitting by "." for simplified labels.
+            If -1 (default), use the last part.
             
         Returns:
         --------
@@ -251,7 +266,11 @@ class CompositionAnalyzer:
         
         # Simplify names first if needed, then sort by display names
         if simplify_names:
-            simplified_mapping = self.simplify_taxa_names(all_top_taxa, max_name_length)
+            simplified_mapping = self.simplify_taxa_names(
+                all_top_taxa,
+                max_name_length,
+                simplified_taxa_level
+            )
             # Sort by simplified names
             all_top_taxa = sorted(all_top_taxa, key=lambda x: simplified_mapping[x])
         else:

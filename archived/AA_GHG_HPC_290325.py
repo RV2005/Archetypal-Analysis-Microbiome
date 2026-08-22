@@ -64,7 +64,7 @@ def main(N_ARCHETYPES=3, group="Genus", FRAC=1, method='braycurtis', NUM_PC=7, o
     AA_data = pcoa_coordinates.to_numpy()
 
     method_kwargs = {
-        "max_iter_optimizer": 100,
+        "max_iter_optimizer": 10000,
     }
 
     init = "aa_plus_plus"

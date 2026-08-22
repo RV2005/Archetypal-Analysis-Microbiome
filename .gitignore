@@ -5,6 +5,8 @@ datasets/*
 results/*
 results_basic/*
 results_validate_fuzzy_taxa/*
+results_validate_taxa_smoke/*
+results_validate_taxa/*
 final_plots/*
 
 # Archived files (optional - uncomment if you want to ignore archived files)

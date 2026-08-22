@@ -124,6 +124,14 @@ class SimplexPlotter:
             present_points, filter_labels = self._remove_specified_values(
                 present_points, filter_labels, remove_values
             )
+
+        # Guard against empty data after filtering to avoid crashing in
+        # archetypes.visualization.simplex (np.apply_along_axis on size-0).
+        if present_points.empty:
+            if ax is None:
+                fig, ax = plt.subplots(1, 1, figsize=figsize)
+            print("No points available for simplex plot after filtering; skipping draw.")
+            return ax
         
         # Prepare colors
         color, unique_colors, cmap = self._prepare_colors(
@@ -290,6 +298,7 @@ class SimplexPlotter:
                           projects: pd.DataFrame,
                           meta: pd.DataFrame,
                           tags: pd.DataFrame,
+                          file_template: str = "otu_AA_K{k}_1.0_None_jensenshannon.json",
                           legend_type: str = "discrete",
                           swapped_cols: Optional[Dict[int, List[str]]] = None,
                           remove_values: Dict[str, str] = None,
@@ -319,6 +328,9 @@ class SimplexPlotter:
             Sample metadata
         tags : DataFrame, optional
             Tags data
+        file_template : str, optional
+            Template used to resolve each result file. The template must include
+            ``{k}`` and is resolved with ``file_template.format(k=k)``.
         remove_values : Dict[str, str], optional
             Values to remove from visualization
         cmap_name : str
@@ -341,6 +353,9 @@ class SimplexPlotter:
         """
         if remove_values is None:
             remove_values = {}
+
+        if "{k}" not in file_template:
+            raise ValueError("file_template must contain '{k}' placeholder")
         
         # Calculate subplot layout
         num_plots = len(k_values)
@@ -360,7 +375,7 @@ class SimplexPlotter:
         
         for i, k in tqdm(enumerate(k_values), total=num_plots):
             # Load result
-            filename = f"otu_AA_K{k}_1.0_None_jensenshannon.json"
+            filename = file_template.format(k=k)
             filepath = os.path.join(directory, filename)
             
             try:
@@ -380,8 +395,27 @@ class SimplexPlotter:
                 metadata = extract_metadata_compendium(
                     otu_aa.index, tags, meta, projects, filter_cols
                 )
+            elif meta is not None:
+                metadata = meta.reindex(otu_aa.index)
             else:
                 metadata = pd.DataFrame(index=otu_aa.index)
+
+            # Fallback: if compendium extraction produced no usable values for all
+            # requested filter columns, try direct metadata alignment from `meta`.
+            # This supports workflows where callers already have sample-indexed
+            # metadata and do not rely on project/srr reconstruction.
+            if meta is not None and len(filter_cols) > 0:
+                has_any_value = False
+                for col in filter_cols:
+                    if col in metadata.columns and metadata[col].notna().any():
+                        has_any_value = True
+                        break
+
+                if not has_any_value:
+                    direct_meta = meta.reindex(otu_aa.index)
+                    direct_cols = [c for c in filter_cols if c in direct_meta.columns]
+                    if len(direct_cols) > 0:
+                        metadata = direct_meta
             
             # Get subplot
             if num_plots > 1:
