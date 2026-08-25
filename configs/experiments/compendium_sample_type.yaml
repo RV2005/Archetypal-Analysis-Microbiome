@@ -1,0 +1,65 @@
+extends:
+  - ../defaults.yaml
+  - ../datasets/compendium.yaml
+
+experiment:
+  name: compendium_sample_type
+  description: Compendium sample type task migrated from dataset_configs.json
+
+task:
+  target: sample_type
+  legend_type: discrete
+  label_rename_map:
+    esophageal biopsy: Esophageal Biopsy
+    ileal mucosal sample: Ileal Mucosal
+    cervicovaginal swab: Cervicovaginal Swab
+    appendiceal tissue: Appendiceal Tissue
+    fixed tissue samples: Fixed Tissue
+    stool: Stool
+    tumor samples: Colorectal Tumor
+  color_map:
+    Stool: "#F78936"
+    Appendiceal Tissue: "#056db7"
+    Cervicovaginal Swab: "#7B0973"
+    Esophageal Biopsy: "#70453c"
+    Fixed Tissue: "#f580d2"
+    Ileal Mucosal: "#2ca02c"
+    Colorectal Tumor: "#d62728"
+
+filter:
+  enabled: true
+  control: {"region": ["Europe and Northern America"]}                  
+  normalize: {
+    "sample_type": ['cervicovaginal swab', 'appendiceal tissue', 'stool', 'ileal mucosal sample', 
+                    'fixed tissue samples', 'esophageal biopsy', 'tumor samples']
+  }               
+  continuous: false
+  tolerance: 0.0
+
+selection:
+  mode: fixed
+  fixed_k: 7
+
+visualization:
+  archetype_order: null # [Archetype 1, Archetype 3, Archetype 2, Archetype 5, Archetype 6, Archetype 4, Archetype 7]
+  archetype_colors:
+    Archetype 1: "#2ca02c"
+    Archetype 2: "#7328ff"
+    Archetype 3: "#d62728"
+    Archetype 4: "#21e7f9"
+    Archetype 5: "#056db7"
+    Archetype 6: "#70453c"
+    Archetype 7: "#f580d2"
+  simplex:
+    cmap: tab20
+  multi_k_simplex:
+    cmap: tab20
+    k_values: [4, 7, 11, 13]
+  stacked_bar:
+    cmap: tab20
+  pcoa:
+    cmap: tab20
+  umap:
+    cmap: tab20
+  tsne:
+    cmap: tab20

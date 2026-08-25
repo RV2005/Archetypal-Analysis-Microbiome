@@ -13,6 +13,10 @@ final_plots/*
 # archived/
 # archived/*
 
+# Workspace
+.vscode/
+repomix*
+
 # Python cache files
 __pycache__/
 *.py[cod]

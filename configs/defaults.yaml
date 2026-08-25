@@ -1,0 +1,249 @@
+# Global defaults. Experiment YAML files inherit this and override only what differs.
+paths:
+  project_root: .
+  output_root: results
+
+experiment:
+  name: default
+  description: null
+
+# Standardized datasets always expose exactly these two files. Metadata columns are task-specific.
+dataset:
+  root: datasets/standardized/example
+  otu_file: otu.tsv
+  metadata_file: metadata.tsv
+  sample_id_column: sample
+  strict_sample_match: false
+  validation:
+    enabled: false
+
+    # Optional overrides:
+    unique_sample_ids: true
+    numeric_otu: false
+    coerce_numeric_otu: false
+    sample_match: true
+    target_column: false
+
+task:
+  target: CHANGE_ME
+  legend_type: discrete        # discrete | continuous
+  strip_numeric_prefix: false
+  label_rename_map: {}
+  color_map: {}
+  colorbar_title: null
+  required_metadata_columns: []
+
+filter:
+  enabled: true
+  drop_missing_target: true
+  exclude_target_values: [unknown]
+  # Same semantics as the legacy DataNormalizer:
+  control: {}                  # e.g. condition: [healthy]
+  normalize: {}                # e.g. region: null, or age: [[0, 6], [6, 12]]
+  continuous: false
+  ignore_zero: true
+  ignore_values: []
+  tolerance: 0.0
+  random_state: 42
+
+qc:
+  enabled: true
+  min_taxa_level: 3
+  min_nonzero_samples: 0.01
+  min_counts: 5000
+  min_total_counts: null
+  std_filter: null
+
+fit:
+  # k_values: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+  k_values: [5, 6, 7, 8]
+  method: pgd
+  max_iter: 10000
+  random_state: 42
+  method_kwargs:
+    max_iter_optimizer: 10000
+  model_kwargs:
+    init: aa_plus_plus
+    init_kwargs:
+      kwargs:
+        const: 1000
+  preprocessing:
+    mode: clr  # raw_counts | log | relative_abundance | clr
+    log_base: 2
+    pseudocount: 1.0
+
+    # relative_abundance mode
+    relative_abundance_scale: 1.0
+    # CLR mode
+    clr_pseudocount: 1.0
+
+    sample_fraction: 1.0
+    sample_random_state: 42
+
+    standard_scale: false
+    drop_nan_rows: true
+    drop_zero_variance_features: true
+  parallel:
+    # 0 means use SLURM_CPUS_PER_TASK, falling back to local CPU count.
+    n_jobs: 0
+    backend: process
+  verbose_fit: false
+
+evaluation:
+  drop_missing_target: true
+  discretize_target: false
+  buckets: null
+
+selection:
+  # all = skip K selection and run K-dependent downstream outputs for every K.
+  # fixed = use fixed_k.
+  # quality = lowest K whose normalized silhouette - normalized DB is within n% of max.
+  # reconstruction = lowest K whose reconstruction error is within n% of the minimum.
+  mode: all
+  fixed_k: null
+  within_percent: 5.0
+  reconstruction_metric: relative_frobenius_error
+
+analysis:
+  modules: [sample_scores, dominance, metadata_association, top_taxa]
+  dominance_threshold: 0.5
+  num_top_taxa: 5
+
+visualization:
+  enabled: true
+  format: png
+  dpi: 180
+  archetype_colors: {}
+  archetype_order: null
+
+  archetype_ordering:
+    enabled: true
+    method: association_similarity      # top_association | association_similarity
+    similarity_metric: cosine   # association_similarity only: cosine | euclidean
+    exact_max_k: 15      # Exact optimization through this K. Larger K uses deterministic greedy + 2-opt.
+
+  archetype_projection:
+    marker: X
+    marker_mode: numeric          # symbol | numeric
+    numeric_marker: true
+    numeric_marker_size: 260
+    marker_size: 180
+    edgecolor: black
+    linewidth: 1.2
+    label: false
+    label_fontsize: 9
+    marker_legend:
+      enabled: false
+      loc: lower center
+      bbox_to_anchor: [0.5, 0.0]
+      ncol: null                 # null = one horizontal row
+      frameon: false
+      fontsize: 9
+      legend_marker_size: 12
+      bottom_adjust: 0.12
+
+  metrics_over_k:
+    enabled: true
+    figsize: [9, 5]
+    linewidth: 2
+    grid_alpha: 0.25
+    legend_loc: best
+
+  multi_k_simplex:
+    enabled: true
+    k_values: null             # null = all fitted K values
+    ncols: 2
+    panel_size: [6, 6]
+    cmap: tab20
+    alpha: 0.65
+    s: 12
+    legend_fontsize: 7
+    make_arrows: false
+
+  simplex:
+    enabled: true
+    figsize: [8, 8]
+    cmap: tab20
+    alpha: 0.76
+    s: 30
+    remove_nan: true
+    remove_values: []
+    legend_fontsize: 9
+    make_arrows: false
+
+  stacked_bar:
+    enabled: true
+    figsize: [15, 5]
+    cmap: tab20
+    alpha: 0.85
+    group_by_target: true
+    discretize: false
+    buckets: null
+
+  taxa:
+    enabled: true
+    stacked_enabled: true
+    num_taxa: 5
+    ncols: 3
+    panel_size: [5, 4]
+    stacked_figsize: [10, 6]
+    simplified_taxa_level: -1
+    max_name_length: 30
+    label_rotation: 30
+
+  pcoa:
+    enabled: true
+    distance_metric: jensenshannon
+    n_dimensions: 3
+    pc_combinations: [[PC1, PC2], [PC2, PC3], [PC1, PC3]]
+    log_transform: true
+    clean_data: true
+    figsize: [18, 6]
+    alpha: 0.65
+    s: 14
+    cmap: tab20
+
+  umap:
+    enabled: true
+    n_neighbors: 15
+    min_dist: 0.1
+    n_components: 2
+    metric: euclidean
+    random_state: 42
+    log_transform: true
+    log_base: 2
+    pseudocount: 1.0
+    standard_scale: false
+    figsize: [7, 6]
+    alpha: 0.7
+    s: 18
+    cmap: tab20
+    kwargs: {}
+
+  tsne:
+    enabled: true
+    n_components: 2
+    perplexity: 30
+    learning_rate: auto
+    init: pca
+    metric: euclidean
+    max_iter: 1000
+    random_state: 42
+    log_transform: true
+    log_base: 2
+    pseudocount: 1.0
+    standard_scale: false
+    figsize: [7, 6]
+    alpha: 0.7
+    s: 18
+    cmap: tab20
+    kwargs: {}
+
+  k_summary:
+    enabled: true
+    figsize: [22, 12]
+    width_ratios: [1.0, 1.4]
+    height_ratios: [1.15, 1.0]
+    pcoa_combinations:
+      - [PC1, PC2]
+      - [PC2, PC3]

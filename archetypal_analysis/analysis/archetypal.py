@@ -9,6 +9,13 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple, Any, Union
 
 from archetypes import AA
+from sklearn.utils.validation import check_array
+
+# archetypes 0.6.x compatibility with newer scikit-learn releases.
+if not hasattr(AA, "_validate_data"):
+    def _validate_data(self, X, *args, **kwargs):
+        return check_array(X, *args, **kwargs)
+    AA._validate_data = _validate_data
 from archetypes.datasets import sort_by_archetype_similarity
 
 from ..config import AnalysisConfig, FilePatterns
@@ -77,7 +84,9 @@ class ArchetypalAnalysis:
                  method: str = AnalysisConfig.DEFAULT_METHOD,
                  max_iter: int = AnalysisConfig.DEFAULT_MAX_ITER,
                  random_state: int = AnalysisConfig.DEFAULT_RANDOM_STATE,
-                 **method_kwargs):
+                 method_kwargs: Optional[Dict[str, Any]] = None,
+                 model_kwargs: Optional[Dict[str, Any]] = None,
+                 **legacy_method_kwargs):
         """
         Initialize archetypal analyzer.
         
@@ -99,9 +108,12 @@ class ArchetypalAnalysis:
         self.max_iter = max_iter
         self.random_state = random_state
         
-        # Prepare method kwargs
-        self.method_kwargs = method_kwargs.copy()
+        # Prepare optimizer/model kwargs. ``legacy_method_kwargs`` keeps older callers
+        # that passed optimizer values as free keyword arguments working.
+        self.method_kwargs = dict(method_kwargs or {})
+        self.method_kwargs.update(legacy_method_kwargs)
         self.method_kwargs.setdefault("max_iter_optimizer", max_iter)
+        self.model_kwargs = dict(model_kwargs or {})
         
         # Initialize components
         self.results_manager = ResultsManager()
@@ -195,7 +207,8 @@ class ArchetypalAnalysis:
             n_archetypes=self.n_archetypes,
             method=self.method,
             method_kwargs=self.method_kwargs,
-            random_state=self.random_state
+            random_state=self.random_state,
+            **self.model_kwargs
         )
         
         # Fit model
@@ -324,7 +337,8 @@ class ArchetypalAnalysis:
                 method=self.method,
                 max_iter=self.max_iter,
                 random_state=self.random_state,
-                **self.method_kwargs
+                method_kwargs=self.method_kwargs,
+                model_kwargs=self.model_kwargs
             )
             
             # Fit model
@@ -336,4 +350,3 @@ class ArchetypalAnalysis:
                 analyzer.save_results(result, output_dir)
         
         return results
-

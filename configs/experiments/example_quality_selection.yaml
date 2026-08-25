@@ -1,0 +1,8 @@
+extends:
+  - dog_lifestyle.yaml
+experiment:
+  name: dog_lifestyle_quality_selected
+selection:
+  mode: quality
+  within_percent: 5.0
+  fixed_k: null

@@ -267,8 +267,12 @@ class StackedBarPlotter:
                 **kwargs
             )
             bottom += points[:, j]
-        
-        ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
+
+        legend_patches = [
+            Patch(color=colors[i], label=vertices_labels[i])
+            for i in range(len(vertices_labels))
+        ]
+        ax.legend(handles=legend_patches, loc="upper left", bbox_to_anchor=(1, 1))
     
     def _set_axis_properties(self, ax: plt.Axes, show_labels: bool) -> None:
         """Set axis properties and styling"""

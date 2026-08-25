@@ -1,0 +1,8 @@
+dataset:
+  root: datasets/standardized/compendium
+  otu_file: otu.tsv
+  metadata_file: metadata.tsv
+  sample_id_column: sample
+
+  validation: 
+    enabled: false

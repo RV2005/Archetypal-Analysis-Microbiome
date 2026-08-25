@@ -1,48 +1,47 @@
-#!/bin/bash
-#SBATCH --job-name=archetypal_analysis
+#!/usr/bin/env bash
+#SBATCH --job-name=aa_pipeline
 #SBATCH --partition=compute
 #SBATCH --time=48:00:00
-#SBATCH --mem=40GB
-#SBATCH --cpus-per-task=1
-#SBATCH -a 3-13
-#SBATCH --output=/scratch/rv2340/Archetypal_Analysis_Project/slurm_outs/archetypal_analysis/%x_%A_%a.out
+#SBATCH --mem=40G
+#SBATCH --cpus-per-task=11
+#SBATCH --output=slurm-%x-%j.out
 
+set -euo pipefail
 
-export OMP_NUM_THREADS=11
+# Usage:
+#   sbatch --export=ALL,CONFIG=configs/experiments/dog_lifestyle.yaml,CONDA_ENV=GHG_work sbatch/run_aa.sh
+# Optional:
+#   STAGES=fit,evaluate,select     run only those requested stages (+ reusable dependencies)
+#   OVERWRITE=1                   overwrite explicitly requested stages
+#   CONDA_ENV=...                 activate this conda environment when conda is available
 
-source /share/apps/NYUAD5/miniconda/3-4.11.0/bin/activate
-conda activate GHG_work
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
-# OTU_FILE="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/datasets/raghavi_otu.tsv"
-# OUT_DIR="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/outputs/raghavi"
+CONFIG="${CONFIG:-configs/experiments/dog_lifestyle.yaml}"
+STAGES="${STAGES:-all}"
+OVERWRITE="${OVERWRITE:-0}"
 
-# OTU_FILE="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/datasets/virome_anique_otu.tsv"
-# OUT_DIR="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/outputs/virome_anique"
+if [[ -n "${CONDA_ENV:-}" ]] && command -v conda >/dev/null 2>&1; then
+  CONDA_BASE="$(conda info --base)"
+  # shellcheck disable=SC1090
+  source "$CONDA_BASE/etc/profile.d/conda.sh"
+  conda activate "$CONDA_ENV"
+fi
 
-# OTU_FILE="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/datasets/infant2_raw_kusha_otu.tsv"
-# OUT_DIR="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/outputs/infant2_kusha"
+# AA K values are parallelized as processes. Keep BLAS/OpenMP at one thread per process
+# to prevent nested oversubscription inside a single Slurm allocation.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export MPLBACKEND="${MPLBACKEND:-Agg}"
 
-# OTU_FILE="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/datasets/infant1_kusha_otu.tsv"
-# OUT_DIR="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/outputs/infant1_kusha"
+args=(python -m archetypal_analysis.cli run --config "$CONFIG" --stages "$STAGES")
+if [[ "$OVERWRITE" == "1" || "$OVERWRITE" == "true" ]]; then
+  args+=(--overwrite)
+fi
 
-OTU_FILE="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/datasets/jiaming_otu.tsv"
-OUT_DIR="/scratch/rv2340/Archetypal_Analysis_Project/Extra_Work/outputs/jiaming"
-
-
-FRAC=1.0
-N_ARCHS=$SLURM_ARRAY_TASK_ID
-
-
-echo "Running Archetypal Analysis with $SLURM_ARRAY_TASK_ID archetypes, fraction $FRAC, and OTU file $OTU_FILE"
-
-cd "/scratch/rv2340/Archetypal_Analysis_Project/Archetypal-Analysis/HPC_scripts"
-python "AA_GHG_HPC_190526.py" \
-    --n_archetypes $N_ARCHS \
-    --frac $FRAC \
-    --otu_file $OTU_FILE \
-    --out_dir $OUT_DIR \
-    --log_transform true
-
-
-echo "Job completed for $N_ARCHS archetypes."
-
+printf 'Running: '
+printf '%q ' "${args[@]}"
+printf '\n'
+"${args[@]}"

@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import re
 from matplotlib.patches import Patch
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, ListedColormap
 from typing import Optional, List, Dict, Any, Union, Tuple
 import os
 from tqdm import tqdm
@@ -159,8 +159,8 @@ class SimplexPlotter:
         )
         
         # Add legend
-        self._add_legend(ax, unique_colors, filter_labels, legend_type, 
-                        cmap_name, filter_cols, legend_fontsize)
+        self._add_legend(ax, unique_colors, filter_labels, legend_type,
+                        cmap, filter_cols, legend_fontsize)
         
         return ax
     
@@ -225,17 +225,24 @@ class SimplexPlotter:
                        custom_colors: Optional[Dict]) -> Tuple[pd.Series, Dict, Any]:
         """Prepare colors for plotting"""
         if legend_type == "discrete":
-            if custom_colors is not None:
+            labels = sorted(filter_labels.dropna().unique(), key=self._natural_sort_key)
+            if custom_colors is not None and any(
+                isinstance(custom_colors.get(c), str) for c in labels if c in custom_colors
+            ):
+                base = plt.get_cmap(cmap_name, max(1, len(labels)))
+                color_list = [custom_colors.get(c, base(i)) for i, c in enumerate(labels)]
+                cmap = ListedColormap(color_list)
+                unique_colors = {c: i for i, c in enumerate(labels)}
+            elif custom_colors is not None:
                 unique_colors = {
-                    c: custom_colors[c] if c in custom_colors else i 
-                    for i, c in enumerate(filter_labels.unique())
+                    c: custom_colors[c] if c in custom_colors else i
+                    for i, c in enumerate(labels)
                 }
+                cmap = plt.get_cmap(cmap_name)
             else:
-                unique_colors = {
-                    c: i for i, c in enumerate(sorted(filter_labels.unique(), key=self._natural_sort_key))
-                }
+                unique_colors = {c: i for i, c in enumerate(labels)}
+                cmap = plt.get_cmap(cmap_name, max(1, len(unique_colors)))
             color = filter_labels.map(unique_colors)
-            cmap = plt.get_cmap(cmap_name, len(unique_colors))
         
         elif legend_type == "continuous":
             unique_colors = filter_labels
@@ -252,12 +259,11 @@ class SimplexPlotter:
                    unique_colors: Union[Dict, pd.Series],
                    filter_labels: pd.Series,
                    legend_type: str,
-                   cmap_name: str,
+                   cmap: Any,
                    filter_cols: List[str],
                    legend_fontsize: int) -> None:
         """Add legend to the plot"""
         if legend_type == "discrete":
-            cmap = plt.get_cmap(cmap_name, len(unique_colors))
             legend_patches = [
                 Patch(color=cmap(unique_colors[c]), label=c)
                 for c in unique_colors
@@ -283,7 +289,7 @@ class SimplexPlotter:
 
             cbar = plt.colorbar(
                 ScalarMappable(
-                    cmap=plt.get_cmap(cmap_name),
+                    cmap=cmap,
                     norm=Normalize(vmin=min_val, vmax=max_val)
                 ), 
                 ax=ax, 

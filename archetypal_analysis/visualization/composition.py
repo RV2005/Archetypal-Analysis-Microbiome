@@ -467,4 +467,3 @@ class CompositionAnalyzer:
                 })
         
         return pd.DataFrame(summary_data)
-    

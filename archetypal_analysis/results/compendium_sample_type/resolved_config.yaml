@@ -1,0 +1,248 @@
+paths:
+  project_root: .
+  output_root: results
+experiment:
+  name: compendium_sample_type
+  description: Compendium sample type task migrated from dataset_configs.json
+dataset:
+  root: datasets/standardized/compendium
+  otu_file: otu.tsv
+  metadata_file: metadata.tsv
+  sample_id_column: sample
+  strict_sample_match: false
+task:
+  target: sample_type
+  legend_type: discrete
+  strip_numeric_prefix: false
+  label_rename_map:
+    esophageal biopsy: Esophageal Biopsy
+    ileal mucosal sample: Ileal Mucosal
+    cervicovaginal swab: Cervicovaginal Swab
+    appendiceal tissue: Appendiceal Tissue
+    fixed tissue samples: Fixed Tissue
+    stool: Stool
+    tumor samples: Colorectal Tumor
+  color_map:
+    Stool: '#F78936'
+    Appendiceal Tissue: '#056db7'
+    Cervicovaginal Swab: '#7B0973'
+    Esophageal Biopsy: '#70453c'
+    Fixed Tissue: '#f580d2'
+    Ileal Mucosal: '#2ca02c'
+    Colorectal Tumor: '#d62728'
+  colorbar_title: null
+  required_metadata_columns: []
+filter:
+  enabled: true
+  drop_missing_target: true
+  exclude_target_values:
+  - unknown
+  control:
+    region:
+    - Europe and Northern America
+  normalize:
+    sample_type:
+    - cervicovaginal swab
+    - appendiceal tissue
+    - stool
+    - ileal mucosal sample
+    - fixed tissue samples
+    - esophageal biopsy
+    - tumor samples
+  continuous: false
+  ignore_zero: true
+  ignore_values: []
+  tolerance: 0.0
+  random_state: 42
+qc:
+  enabled: true
+  min_taxa_level: 3
+  min_nonzero_samples: 0.01
+  min_counts: 5000
+  min_total_counts: null
+  std_filter: null
+fit:
+  k_values:
+  - 5
+  - 6
+  - 7
+  - 8
+  method: pgd
+  max_iter: 10000
+  random_state: 42
+  method_kwargs:
+    max_iter_optimizer: 10000
+  model_kwargs:
+    init: aa_plus_plus
+    init_kwargs:
+      kwargs:
+        const: 1000
+  preprocessing:
+    mode: clr
+    log_base: 2
+    pseudocount: 1.0
+    relative_abundance_scale: 1.0
+    clr_pseudocount: 1.0
+    sample_fraction: 1.0
+    sample_random_state: 42
+    standard_scale: false
+    drop_nan_rows: true
+    drop_zero_variance_features: true
+  parallel:
+    n_jobs: 0
+    backend: process
+  verbose_fit: false
+evaluation:
+  drop_missing_target: true
+  discretize_target: false
+  buckets: null
+selection:
+  mode: fixed
+  fixed_k: 7
+  within_percent: 5.0
+  reconstruction_metric: relative_frobenius_error
+analysis:
+  modules:
+  - sample_scores
+  - dominance
+  - metadata_association
+  - top_taxa
+  dominance_threshold: 0.5
+  num_top_taxa: 5
+visualization:
+  enabled: true
+  format: png
+  dpi: 180
+  archetype_order:
+  - Archetype 1
+  - Archetype 3
+  - Archetype 2
+  - Archetype 5
+  - Archetype 6
+  - Archetype 4
+  - Archetype 7
+  archetype_colors:
+    Archetype 1: '#2ca02c'
+    Archetype 2: '#7328ff'
+    Archetype 3: '#d62728'
+    Archetype 4: '#21e7f9'
+    Archetype 5: '#056db7'
+    Archetype 6: '#70453c'
+    Archetype 7: '#f580d2'
+  metrics_over_k:
+    enabled: true
+    figsize:
+    - 9
+    - 5
+    linewidth: 2
+    grid_alpha: 0.25
+    legend_loc: best
+  multi_k_simplex:
+    enabled: true
+    k_values:
+    - 4
+    - 7
+    - 11
+    - 13
+    ncols: 2
+    panel_size:
+    - 6
+    - 6
+    cmap: tab20
+    alpha: 0.65
+    s: 12
+    legend_fontsize: 7
+    make_arrows: false
+  simplex:
+    enabled: true
+    figsize:
+    - 8
+    - 8
+    cmap: tab20
+    alpha: 0.76
+    s: 30
+    remove_nan: true
+    remove_values: []
+    legend_fontsize: 9
+    make_arrows: false
+  stacked_bar:
+    enabled: true
+    figsize:
+    - 15
+    - 5
+    cmap: tab20
+    alpha: 0.85
+    group_by_target: true
+    discretize: false
+    buckets: null
+  taxa:
+    enabled: true
+    stacked_enabled: true
+    num_taxa: 5
+    ncols: 3
+    panel_size:
+    - 5
+    - 4
+    stacked_figsize:
+    - 10
+    - 6
+    simplified_taxa_level: -1
+    max_name_length: 30
+    label_rotation: 30
+  pcoa:
+    enabled: true
+    distance_metric: jensenshannon
+    n_dimensions: 3
+    pc_combinations:
+    - - PC1
+      - PC2
+    - - PC2
+      - PC3
+    - - PC1
+      - PC3
+    log_transform: true
+    clean_data: true
+    figsize:
+    - 18
+    - 6
+    alpha: 0.65
+    s: 14
+    cmap: tab20
+  umap:
+    enabled: true
+    n_neighbors: 15
+    min_dist: 0.1
+    n_components: 2
+    metric: euclidean
+    random_state: 42
+    log_transform: true
+    log_base: 2
+    pseudocount: 1.0
+    standard_scale: false
+    figsize:
+    - 7
+    - 6
+    alpha: 0.7
+    s: 18
+    cmap: tab20
+    kwargs: {}
+  tsne:
+    enabled: true
+    n_components: 2
+    perplexity: 30
+    learning_rate: auto
+    init: pca
+    metric: euclidean
+    max_iter: 1000
+    random_state: 42
+    log_transform: true
+    log_base: 2
+    pseudocount: 1.0
+    standard_scale: false
+    figsize:
+    - 7
+    - 6
+    alpha: 0.7
+    s: 18
+    cmap: tab20
+    kwargs: {}

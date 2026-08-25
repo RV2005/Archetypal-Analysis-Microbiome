@@ -241,7 +241,7 @@ class PCoAVisualizer:
         pcoa_data = otu_data.copy()
         
         if apply_log_transform:
-            pcoa_data = pcoa_data.map(lambda x: np.log2(x + 1))
+            pcoa_data = np.log2(pcoa_data + 1)
         
         if clean_data:  
             pcoa_data = DataTransformer.general_cleanup(pcoa_data)
@@ -281,5 +281,3 @@ class PCoAVisualizer:
         except Exception as e:
             print(f"Error in PCoA calculation: {e}")
             raise
-
-

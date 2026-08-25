@@ -1,0 +1,68 @@
+extends:
+  - ../defaults.yaml
+  - ../datasets/hadza.yaml
+
+experiment:
+  name: hadza_age
+  description: Hadza age task migrated from dataset_configs.json
+
+task:
+  target: age_months
+  legend_type: continuous
+  colorbar_title: Age in months
+
+filter:
+  exclude_target_values: [unknown]
+
+evaluation:
+  discretize_target: true
+  buckets:
+    - [0, 6]
+    - [6, 12]
+    - [12, 18]
+    - [18, 24]
+    - [24, 30]
+    - [30, 36]
+    - [36, 42]
+    - [42, 48]
+    - [48, 54]
+    - [54, 73]
+
+selection:
+  mode: fixed
+  fixed_k: 6
+
+visualization:
+  archetype_order: [Archetype 4, Archetype 1, Archetype 2, Archetype 3, Archetype 6, Archetype 5]
+  archetype_colors:
+    Archetype 1: 0.1666666667
+    Archetype 2: 0.3333333333
+    Archetype 3: 0.5
+    Archetype 4: 0.6666666667
+    Archetype 5: 0.8333333333
+    Archetype 6: 1.0
+  simplex:
+    cmap: viridis
+  multi_k_simplex:
+    cmap: viridis
+    k_values: [4, 7, 11, 13]
+  stacked_bar:
+    cmap: viridis
+    discretize: true
+    buckets:
+      - [0, 6]
+      - [6, 12]
+      - [12, 18]
+      - [18, 24]
+      - [24, 30]
+      - [30, 36]
+      - [36, 42]
+      - [42, 48]
+      - [48, 54]
+      - [54, 73]
+  pcoa:
+    cmap: viridis
+  umap:
+    cmap: viridis
+  tsne:
+    cmap: viridis

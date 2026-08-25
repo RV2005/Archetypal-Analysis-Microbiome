@@ -159,4 +159,3 @@ class ClusteringAnalyzer: # UNTESTED
             index=similarity_degree.index,
             columns=similarity_degree.index
         )
-

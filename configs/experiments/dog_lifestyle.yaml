@@ -1,0 +1,41 @@
+extends:
+  - ../defaults.yaml
+  - ../datasets/dog.yaml
+
+experiment:
+  name: dog_lifestyle
+  description: Dog Lifestyle task migrated from dataset_configs.json
+
+task:
+  target: Lifestyle
+  legend_type: discrete
+  strip_numeric_prefix: true
+  color_map:
+    Pastoralist: "#1d6ea8"
+    Agrarian: "#2ca02c"
+    Urban: "#e377c2"
+    Industrial: "#d62728"
+    Foragers: "#70453c"
+
+filter:
+  exclude_target_values: [unknown]
+
+selection:
+  mode: fixed
+  fixed_k: 8
+
+visualization:
+  archetype_order: [Archetype 1, Archetype 6, Archetype 2, Archetype 3, Archetype 5, Archetype 8, Archetype 7, Archetype 4]
+  archetype_colors:
+    Archetype 1: "#d62728"
+    Archetype 2: "#fc6a2c"
+    Archetype 3: "#1D921D"
+    Archetype 4: "#70453c"
+    Archetype 5: "#1d6ea8"
+    Archetype 6: "#11d07d"
+    Archetype 7: "#982ead"
+    Archetype 8: "#e377c2"
+  multi_k_simplex:
+    k_values: [4, 7, 11, 13]
+  taxa:
+    num_taxa: 5

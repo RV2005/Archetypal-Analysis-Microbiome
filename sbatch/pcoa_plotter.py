@@ -113,5 +113,3 @@ if __name__ == "__main__":
     out_png = os.path.join('results', f"pcoa_plot_{os.path.splitext(os.path.basename(otuFile))[0]}.png")
     plt.savefig(out_png)
     print(f"Plot saved to {out_png}")
-
-

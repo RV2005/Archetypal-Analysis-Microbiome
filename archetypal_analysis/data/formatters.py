@@ -150,12 +150,12 @@ class DataTransformer:
     @staticmethod
     def log_transform(otu: pd.DataFrame, base: int = 2, pseudocount: float = 1.0) -> pd.DataFrame:
         """Apply log transformation with pseudocount"""
-        if base == 2: 
-            return otu.map(lambda x: np.log2(x + pseudocount))
+        if base == 2:
+            return np.log2(otu + pseudocount)
         elif base == 10:
-            return otu.map(lambda x: np.log10(x + pseudocount))
+            return np.log10(otu + pseudocount)
         else:
-            return otu.map(lambda x: np.log(x + pseudocount) / np.log(base))
+            return np.log(otu + pseudocount) / np.log(base)
     
     @staticmethod
     def sample_fraction(otu: pd.DataFrame, frac: float = 1.0) -> pd.DataFrame:
