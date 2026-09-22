@@ -10,22 +10,30 @@ from ...data.filtering import DatasetFilter
 from .base import PipelineStage, StageContext
 
 
-def required_metadata_columns(task_cfg: Mapping[str, Any]) -> list[str]:
-    """Return configured downstream metadata columns with the target appended once."""
+def required_metadata_columns(cfg: Mapping[str, Any]) -> list[str]:
+    """Return metadata columns persisted with the filtered AA dataset.
+
+    Only metadata used by the AA/evaluation/plot pipeline is retained here. Repeated-
+    measures grouping variables used by prediction/stability are resolved on demand from
+    the canonical standardized metadata file. Keeping those concerns separate means a
+    prediction-only grouping change never invalidates or refits AA/benchmark artifacts,
+    and heterogeneous studies can use different subject-ID columns.
+    """
+    task_cfg = cfg["task"]
     configured = task_cfg.get("required_metadata_columns", []) or []
     if not isinstance(configured, list) or not all(isinstance(column, str) for column in configured):
         raise ValueError("task.required_metadata_columns must be a list of column names")
     target = str(task_cfg["target"])
     ordered: list[str] = []
     for column in [*configured, target]:
-        if column not in ordered:
-            ordered.append(column)
+        if column and column not in ordered:
+            ordered.append(str(column))
     return ordered
 
 
 class FilterStage(PipelineStage):
     name = "filter"
-    dependencies = ("qc",)
+    dependencies = ("load",)
 
     def required_outputs(self, ctx: StageContext) -> list[Path]:
         d = ctx.store.stage_dir(self.name)
@@ -40,15 +48,15 @@ class FilterStage(PipelineStage):
         if not overwrite and ctx.store.is_reusable(self.name, fp, outputs):
             return {"status": "reused", "outputs": outputs}
 
-        bundle = ctx.transient.get("qc_bundle")
+        bundle = ctx.transient.get("loaded_bundle")
         if bundle is None:
-            raise RuntimeError("Filter requires the transient QC dataset; run through PipelineRunner so load/QC execute first")
+            raise RuntimeError("Filter requires the transient loaded dataset; run through PipelineRunner so load executes first")
         if ctx.config["filter"].get("enabled", True):
             bundle = DatasetFilter().apply(bundle, ctx.config["filter"], ctx.config["task"])
         else:
             bundle = DatasetBundle(bundle.otu.copy(), bundle.metadata.copy())
 
-        keep_columns = required_metadata_columns(ctx.config["task"])
+        keep_columns = required_metadata_columns(ctx.config)
         missing = [column for column in keep_columns if column not in bundle.metadata.columns]
         if missing:
             raise KeyError(

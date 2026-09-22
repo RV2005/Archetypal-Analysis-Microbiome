@@ -45,6 +45,32 @@ def inverse_archetypes(archetypes: np.ndarray, transform: Mapping[str, Any]) -> 
     return np.clip(arr, a_min=0.0, a_max=None)
 
 
+def archetype_taxa_values(
+    archetypes: np.ndarray,
+    transform: Mapping[str, Any],
+    value_space: str = "fitted",
+) -> np.ndarray:
+    """Return archetype values for taxa contribution summaries.
+
+    ``fitted`` keeps the AA archetype matrix in its fitted preprocessing space
+    after undoing optional standard scaling. For log-preprocessed fits this avoids
+    exponentiating large log-space values, which can make one taxon appear to
+    dominate an archetype. ``inverse`` preserves the older back-transformed behavior.
+    """
+    space = str(value_space or "fitted").lower()
+    if space not in {"fitted", "inverse"}:
+        raise ValueError("taxa value_space must be 'fitted' or 'inverse'")
+    if space == "inverse":
+        return inverse_archetypes(archetypes, transform)
+
+    arr = np.asarray(archetypes, dtype=float).copy()
+    if transform.get("standard_scale"):
+        mean = np.asarray(transform["mean"], dtype=float)
+        std = np.asarray(transform["std"], dtype=float)
+        arr = arr * std + mean
+    return np.clip(arr, a_min=0.0, a_max=None)
+
+
 @register_analysis("sample_scores")
 def sample_scores(result, metadata, fit_input, cfg, out_dir):
     sim = similarity_frame(result)
@@ -98,7 +124,11 @@ def metadata_association(result, metadata, fit_input, cfg, out_dir):
 @register_analysis("top_taxa")
 def top_taxa(result, metadata, fit_input, cfg, out_dir):
     transform = json.loads((Path(cfg["_runtime"]["fit_dir"]) / "transform.json").read_text())
-    arch = inverse_archetypes(np.asarray(result["archetypes"], dtype=float), transform)
+    value_space = cfg["analysis"].get(
+        "top_taxa_value_space",
+        cfg["analysis"].get("taxa_value_space", "fitted"),
+    )
+    arch = archetype_taxa_values(np.asarray(result["archetypes"], dtype=float), transform, value_space)
     features = list(result["feature_names"])
     n = int(cfg["analysis"].get("num_top_taxa", cfg["visualization"].get("taxa", {}).get("num_taxa", 5)))
     rows = []
@@ -110,6 +140,7 @@ def top_taxa(result, metadata, fit_input, cfg, out_dir):
                 "archetype": f"Archetype {i + 1}",
                 "rank": rank,
                 "taxon": features[j],
+                "value_space": value_space,
                 "value": float(values[j]),
                 "fraction": float(values[j] / total) if total > 0 else np.nan,
             })

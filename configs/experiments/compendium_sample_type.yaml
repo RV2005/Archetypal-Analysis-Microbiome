@@ -37,7 +37,7 @@ filter:
   tolerance: 0.0
 
 selection:
-  mode: fixed
+  mode: quality
   fixed_k: 7
 
 visualization:
@@ -63,3 +63,9 @@ visualization:
     cmap: tab20
   tsne:
     cmap: tab20
+
+prediction:
+  enabled: true
+
+stability:
+  enabled: true

@@ -15,8 +15,8 @@ class StageContext:
     config: Mapping[str, Any]
     store: ArtifactStore
     verbose: bool = True
-    # Transient stage-to-stage handoff. Load and QC deliberately do not persist large
-    # datasets; their DatasetBundle objects live here only for the current invocation.
+    # Transient stage-to-stage handoff. Load deliberately does not persist large
+    # datasets; its DatasetBundle object lives here only for the current invocation.
     transient: dict[str, Any] = field(default_factory=dict)
 
 

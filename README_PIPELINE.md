@@ -75,18 +75,22 @@ load -> filter -> qc -> fit -> evaluate -> select -> analyze -> plot
 Artifacts are written under `results/<experiment.name>/`:
 
 ```text
-01_load/
-02_filter/
-03_qc/
-04_fit/
+01_filter/
+  otu.tsv
+  metadata.tsv
+02_qc/
+  otu.tsv
+  metadata.tsv
+  qc_summary.json
+03_fit/
   fit_input.tsv
   transform.json
   K_003/{result.json,similarity.tsv,archetypes.tsv,_SUCCESS.json}
   K_004/...
-05_evaluate/k_metrics.tsv
-06_select/selection.json
-07_analyze/K_003/...
-08_plot/
+04_evaluate/k_metrics.tsv
+05_select/selection.json
+06_analyze/K_003/...
+07_plot/
   common/
     silhouette_davies_bouldin_over_k.png
     normalized_quality_over_k.png

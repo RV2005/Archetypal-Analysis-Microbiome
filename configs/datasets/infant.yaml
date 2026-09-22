@@ -1,0 +1,5 @@
+dataset:
+  root: datasets/standardized/infant
+  otu_file: otu.tsv
+  metadata_file: metadata.tsv
+  sample_id_column: sample

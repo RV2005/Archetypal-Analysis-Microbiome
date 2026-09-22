@@ -6,6 +6,8 @@ def test_pipeline_no_longer_emits_separate_taxa_bars_png():
     source = (root / "archetypal_analysis/pipeline/stages/plot.py").read_text()
     assert 'taxa_bars.{ext}' not in source
     assert 'taxa_stacked_bar.{ext}' in source
+    assert 'taxa_heatmap.{ext}' in source
+    assert 'taxa_heatmap.tsv' in source
     assert 'visual_top_taxa.tsv' in source
     assert 'summary.{ext}' in source
 
@@ -50,3 +52,29 @@ def test_taxa_stacked_plot_uses_explicit_taxon_colors_and_visual_table():
     assert "def _taxa_colors" in source
     assert "color=colors[column]" in source
     assert "def visual_top_taxa_frame" in source
+    assert "archetype_taxa_values" in source
+    assert "Percentage Contribution (%)" in source
+    assert "_simplify_taxon(features[int(idx)], level, max_len).lower()" in source
+
+
+def test_k_summary_supports_taxa_heatmap_and_row_width_ratios():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "archetypal_analysis/visualization/pipeline_plots.py").read_text()
+    defaults = (root / "configs/defaults.yaml").read_text()
+    assert "top_width_ratios" in source
+    assert "bottom_width_ratios" in source
+    assert "taxa_panel" in source
+    assert "_draw_taxa_heatmap" in source
+    assert "top_width_ratios:" in defaults
+    assert "bottom_width_ratios:" in defaults
+    assert "taxa_panel:" in defaults
+
+
+def test_pcoa_axes_display_pico_labels():
+    root = Path(__file__).resolve().parents[1]
+    pcoa_source = (root / "archetypal_analysis/visualization/pcoa.py").read_text()
+    pipeline_source = (root / "archetypal_analysis/visualization/pipeline_plots.py").read_text()
+    assert "PiCo {match.group(1)}" in pcoa_source
+    assert "set_title(f\"{x_label} vs {y_label}\")" in pcoa_source
+    assert "PiCo {match.group(1)}" in pipeline_source
+    assert "set_title(f\"{x_label} vs {y_label}\")" in pipeline_source

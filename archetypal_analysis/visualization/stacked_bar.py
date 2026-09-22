@@ -5,15 +5,90 @@ Stacked bar chart visualization for archetypal analysis.
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import colorsys
 from matplotlib.patches import Patch
-from typing import List, Optional, Dict, Tuple, Any
+from typing import List, Optional, Dict, Tuple, Any, Sequence
 
-from archetypes.datasets import permute_dataset
-from archetypes.visualization import stacked_bar
+def _gradient_order(points: np.ndarray) -> np.ndarray:
+    """Sort rows by dominant archetype, then by dominance strength."""
+    if points.shape[0] == 0:
+        return np.array([], dtype=int)
+    clean = np.nan_to_num(points, nan=-np.inf)
+    dominant = np.argmax(clean, axis=1)
+    strength = np.max(clean, axis=1)
+    return np.lexsort((-strength, dominant))
 
-from ..analysis.archetypal import ArchetypalAnalysisResult
-from ..config import DatasetConfig
+
+def _label_sort_key(value: Any) -> tuple[bool, str]:
+    return (bool(pd.isna(value)), str(value))
+
+
+def _sorted_unique_labels(labels: np.ndarray) -> list[Any]:
+    return sorted(pd.unique(labels).tolist(), key=_label_sort_key)
+
+
+def _discretized_labels(labels: np.ndarray, buckets: Sequence[Tuple[float, float]]) -> tuple[np.ndarray, list[str]]:
+    bucketed = np.full(labels.shape[0], None, dtype=object)
+    ordered: list[str] = []
+    numeric = labels.astype(float)
+    for bucket_min, bucket_max in buckets:
+        bucket_label = f"{bucket_min}+" if bucket_max == float("inf") else f"{bucket_min}-{bucket_max}"
+        if bucket_max == float("inf"):
+            mask = numeric >= bucket_min
+        else:
+            mask = (numeric >= bucket_min) & (numeric < bucket_max)
+        if np.any(mask):
+            bucketed[mask] = bucket_label
+            ordered.append(bucket_label)
+    return bucketed, ordered
+
+
+def similarity_gradient_permutation(
+    points: np.ndarray,
+    labels: Optional[np.ndarray] = None,
+    label_order: Optional[Sequence[Any]] = None,
+) -> list[int]:
+    """Return a row permutation that reveals archetype gradients.
+
+    When labels are provided, samples stay inside their metadata-category block and
+    are sorted within that block by dominant archetype and similarity strength.
+    """
+    points = np.asarray(points)
+    if labels is None:
+        return _gradient_order(points).astype(int).tolist()
+
+    labels = np.asarray(labels).ravel()
+    if len(labels) != points.shape[0]:
+        raise ValueError("labels must have one entry per similarity row")
+
+    if label_order is None:
+        label_order = _sorted_unique_labels(labels)
+
+    perms: list[int] = []
+    for label in label_order:
+        if pd.isna(label):
+            mask = pd.isna(labels)
+        else:
+            mask = labels == label
+        indices = np.flatnonzero(mask)
+        if len(indices) == 0:
+            continue
+        local = _gradient_order(points[indices])
+        perms.extend(indices[local].astype(int).tolist())
+    return perms
+
+
+def stacked_bar_gradient_permutation(
+    points: np.ndarray,
+    labels: Optional[np.ndarray] = None,
+    discretize: bool = False,
+    buckets: Optional[Sequence[Tuple[float, float]]] = None,
+) -> list[int]:
+    """Compute the sample order used by the stacked-bar gradient visualization."""
+    grouping_labels = None if labels is None else np.asarray(labels).ravel()
+    label_order = None
+    if grouping_labels is not None and discretize and buckets is not None:
+        grouping_labels, label_order = _discretized_labels(grouping_labels, buckets)
+    return similarity_gradient_permutation(points, grouping_labels, label_order)
 
 
 class StackedBarPlotter:
@@ -32,6 +107,7 @@ class StackedBarPlotter:
                    buckets: Optional[List[Tuple[float, float]]] = None,
                    alpha: float = 0.8,
                    vertex_colors: Optional[Dict[str, float]] = None,
+                   sort_within_label_blocks: bool = True,
                    **kwargs) -> plt.Axes:
         """
         Enhanced stacked bar method with metadata integration.
@@ -75,13 +151,18 @@ class StackedBarPlotter:
         
         points = np.asarray(points)
         
-        # Apply permutation if provided
+        if labels is not None:
+            labels = np.asarray(labels).ravel()
+
+        if perms is None and sort_within_label_blocks:
+            perms = stacked_bar_gradient_permutation(points, labels, discretize, buckets)
+
         if perms is not None:
-            perms_array = np.array([perms])
-            points, _ = permute_dataset(points, perms_array)
+            perms_array = np.asarray(perms, dtype=int)
+            points = points[perms_array]
             if labels is not None:
-                labels, _ = permute_dataset(labels, perms_array)
-                labels = labels.ravel()
+                labels = labels[perms_array]
+            ax._aa_stacked_bar_perms = perms_array.astype(int).tolist()
         
         m, n = points.shape
         
@@ -170,14 +251,17 @@ class StackedBarPlotter:
                         labels: np.ndarray,
                         points: np.ndarray) -> Tuple[List, Dict]:
         """Group points by unique labels"""
-        unique_labels, idx = np.unique(labels, return_inverse=True)
         label_groups = {}
-        
-        for i, label in enumerate(unique_labels):
-            mask = idx == i
+
+        unique_labels = _sorted_unique_labels(labels)
+        for label in unique_labels:
+            if pd.isna(label):
+                mask = pd.isna(labels)
+            else:
+                mask = labels == label
             label_groups[label] = points[mask]
         
-        return unique_labels.tolist(), label_groups
+        return unique_labels, label_groups
     
     def _plot_grouped_bars(self,
                           ax: plt.Axes,
@@ -307,6 +391,7 @@ class StackedBarPlotter:
                                   figsize: Tuple[int, int] = (15, 5),
                                   vertex_colors: Optional[Dict[str, float]] = None,
                                   vertices_labels: Optional[List[str]] = None,
+                                  sort_within_label_blocks: bool = True,
                                   **kwargs) -> plt.Axes:
         """
         Plot stacked bars with metadata-based grouping.
@@ -362,5 +447,6 @@ class StackedBarPlotter:
             discretize=discretize,
             buckets=buckets,
             vertices_labels=vertices_labels,
+            sort_within_label_blocks=sort_within_label_blocks,
             **kwargs
         )

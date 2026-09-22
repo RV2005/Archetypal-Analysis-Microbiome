@@ -69,7 +69,7 @@ class EvaluateStage(PipelineStage):
 
         fit_dir = ctx.store.stage_dir("fit")
         fit_input = pd.read_csv(fit_dir / "fit_input.tsv", sep="\t", index_col="sample")
-        metadata = pd.read_csv(ctx.store.stage_dir("filter") / "metadata.tsv", sep="\t", index_col="sample", low_memory=False)
+        metadata = pd.read_csv(ctx.store.stage_dir("qc") / "metadata.tsv", sep="\t", index_col="sample", low_memory=False)
         metadata.index = metadata.index.map(str)
         target = ctx.config["task"]["target"]
         eval_cfg = ctx.config["evaluation"]

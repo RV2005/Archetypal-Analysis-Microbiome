@@ -13,16 +13,19 @@ from .config import output_root
 from .stages.base import PipelineStage, StageContext
 
 
-DEFAULT_STAGE_ORDER = ["load", "qc", "filter", "fit", "evaluate", "select", "analyze", "plot"]
+DEFAULT_STAGE_ORDER = ["load", "filter", "qc", "fit", "evaluate", "select", "benchmark", "prediction", "stability", "analyze", "plot"]
 DEFAULT_STAGE_SPECS = {
     "load": ("archetypal_analysis.pipeline.stages.load", "LoadStage", ()),
-    "qc": ("archetypal_analysis.pipeline.stages.qc", "QCStage", ("load",)),
-    "filter": ("archetypal_analysis.pipeline.stages.filter", "FilterStage", ("qc",)),
-    "fit": ("archetypal_analysis.pipeline.stages.fit", "FitStage", ("filter",)),
+    "filter": ("archetypal_analysis.pipeline.stages.filter", "FilterStage", ("load",)),
+    "qc": ("archetypal_analysis.pipeline.stages.qc", "QCStage", ("filter",)),
+    "fit": ("archetypal_analysis.pipeline.stages.fit", "FitStage", ("qc",)),
     "evaluate": ("archetypal_analysis.pipeline.stages.evaluate", "EvaluateStage", ("fit",)),
     "select": ("archetypal_analysis.pipeline.stages.select", "SelectStage", ("evaluate",)),
-    "analyze": ("archetypal_analysis.pipeline.stages.analyze", "AnalyzeStage", ("select",)),
-    "plot": ("archetypal_analysis.pipeline.stages.plot", "PlotStage", ("select",)),
+    "benchmark": ("archetypal_analysis.pipeline.stages.benchmark", "BenchmarkStage", ("fit",)),
+    "prediction": ("archetypal_analysis.pipeline.stages.prediction", "PredictionStage", ("select",)),
+    "stability": ("archetypal_analysis.pipeline.stages.stability", "StabilityStage", ("select",)),
+    "analyze": ("archetypal_analysis.pipeline.stages.analyze", "AnalyzeStage", ("select", "benchmark", "prediction", "stability")),
+    "plot": ("archetypal_analysis.pipeline.stages.plot", "PlotStage", ("select", "stability")),
 }
 
 

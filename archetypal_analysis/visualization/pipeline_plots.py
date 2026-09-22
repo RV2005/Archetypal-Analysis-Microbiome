@@ -14,11 +14,10 @@ import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from ..analysis.experiments import inverse_archetypes, similarity_frame
+from ..analysis.experiments import archetype_taxa_values, inverse_archetypes, similarity_frame
 from .archetype_ordering import clean_task_labels, natural_key, resolve_archetype_order
 from .embeddings import ProjectedEmbedding, compute_pcoa, compute_tsne, compute_umap, plot_embedding
-from .simplex import SimplexPlotter
-from .stacked_bar import StackedBarPlotter
+from .stacked_bar import StackedBarPlotter, stacked_bar_gradient_permutation
 
 
 def _clean_labels(metadata: pd.DataFrame, task: Mapping[str, Any]) -> pd.DataFrame:
@@ -128,6 +127,8 @@ def _draw_simplex(
     cfg: Mapping[str, Any],
     order: Sequence[str] | None,
 ):
+    from .simplex import SimplexPlotter
+
     metadata = _clean_labels(metadata, task)
     sim, _, _ = _archetype_order(result, order)
     SimplexPlotter().plot_simplex(
@@ -205,14 +206,16 @@ def _draw_similarity_stacked(
     common = sim.index.intersection(metadata.index, sort=False)
     sim = sim.loc[common]
     plot_metadata = metadata.loc[common]
-    perms = result.get("info_perms") or None
-    if order:
-        # Saved sample permutations were computed in the original vertex ordering.
-        perms = None
     buckets = cfg.get("buckets")
     if buckets is not None:
         buckets = [(lo, float("inf") if hi is None else hi) for lo, hi in buckets]
     labels = plot_metadata[task["target"]].values if cfg.get("group_by_target", True) else None
+    perms = stacked_bar_gradient_permutation(
+        sim.to_numpy(),
+        labels=labels,
+        discretize=bool(cfg.get("discretize", False)),
+        buckets=buckets,
+    )
     StackedBarPlotter().stacked_bar(
         points=sim.to_numpy(),
         perms=perms,
@@ -226,6 +229,43 @@ def _draw_similarity_stacked(
         alpha=float(cfg.get("alpha", 0.85)),
     )
     return ax
+
+
+def similarity_stacked_permutation_frame(
+    result: Mapping[str, Any],
+    metadata: pd.DataFrame,
+    task: Mapping[str, Any],
+    cfg: Mapping[str, Any],
+    order: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Return the exact displayed sample permutation for the similarity stacked bar."""
+    metadata = _clean_labels(metadata, task)
+    sim, _, _ = _archetype_order(result, order)
+    common = sim.index.intersection(metadata.index, sort=False)
+    sim = sim.loc[common]
+    plot_metadata = metadata.loc[common]
+    buckets = cfg.get("buckets")
+    if buckets is not None:
+        buckets = [(lo, float("inf") if hi is None else hi) for lo, hi in buckets]
+    labels = plot_metadata[task["target"]].values if cfg.get("group_by_target", True) else None
+    perms = stacked_bar_gradient_permutation(
+        sim.to_numpy(),
+        labels=labels,
+        discretize=bool(cfg.get("discretize", False)),
+        buckets=buckets,
+    )
+    ordered_samples = sim.index.to_numpy()[np.asarray(perms, dtype=int)]
+    frame = pd.DataFrame({
+        "plot_position": np.arange(1, len(ordered_samples) + 1, dtype=int),
+        "permutation_index": perms,
+        "sample": ordered_samples,
+    })
+    if labels is not None:
+        frame[task["target"]] = plot_metadata.loc[ordered_samples, task["target"]].to_numpy()
+    dominant = sim.loc[ordered_samples].idxmax(axis=1)
+    frame["dominant_archetype"] = dominant.to_numpy()
+    frame["dominant_similarity"] = sim.loc[ordered_samples].max(axis=1).to_numpy()
+    return frame
 
 
 def plot_similarity_stacked(
@@ -297,7 +337,8 @@ def _taxa_stacked_data(
     cfg: Mapping[str, Any],
     order: Sequence[str] | None,
 ) -> tuple[np.ndarray, list[str], list[int], list[str]]:
-    arch = inverse_archetypes(np.asarray(result["archetypes"], dtype=float), transform)
+    value_space = str(cfg.get("value_space", cfg.get("taxa_value_space", "fitted")))
+    arch = archetype_taxa_values(np.asarray(result["archetypes"], dtype=float), transform, value_space)
     features = list(result["feature_names"])
     names = [f"Archetype {i + 1}" for i in range(len(arch))]
     if order and len(order) == len(names) and set(order) == set(names):
@@ -305,7 +346,13 @@ def _taxa_stacked_data(
         arch = arch[idx]
         names = list(order)
     n = int(cfg.get("num_taxa", 5))
-    top = sorted(set(np.concatenate([np.argsort(row)[::-1][:n] for row in arch]).tolist()))
+    top = set(np.concatenate([np.argsort(row)[::-1][:n] for row in arch]).tolist())
+    level = int(cfg.get("simplified_taxa_level", -1))
+    max_len = int(cfg.get("max_name_length", 30))
+    top = sorted(
+        top,
+        key=lambda idx: (_simplify_taxon(features[int(idx)], level, max_len).lower(), features[int(idx)]),
+    )
     totals = arch.sum(axis=1)
     fractions = np.divide(
         arch[:, top],
@@ -341,6 +388,7 @@ def visual_top_taxa_frame(
     """Top taxa table using the same archetype labels/order as the visualization."""
     fractions, names, top, features = _taxa_stacked_data(result, transform, cfg, order)
     n = int(cfg.get("num_taxa", 5))
+    value_space = str(cfg.get("value_space", cfg.get("taxa_value_space", "fitted")))
     rows = []
     for arch_index, archetype in enumerate(names):
         ranked_columns = np.argsort(fractions[arch_index])[::-1][:n]
@@ -359,6 +407,7 @@ def visual_top_taxa_frame(
                         int(cfg.get("simplified_taxa_level", -1)),
                         int(cfg.get("max_name_length", 30)),
                     ),
+                    "value_space": value_space,
                     "fraction": value,
                 }
             )
@@ -381,15 +430,15 @@ def _draw_taxa_stacked(
         label = _simplify_taxon(features[feature_index], level, max_len)
         ax.bar(
             np.arange(len(names)),
-            fractions[:, column],
-            bottom=bottom,
+            fractions[:, column] * 100.0,
+            bottom=bottom * 100.0,
             label=label,
             color=colors[column],
         )
         bottom += fractions[:, column]
     ax.set_xticks(np.arange(len(names)))
     ax.set_xticklabels(names)
-    ax.set_ylabel("Fraction of archetype")
+    ax.set_ylabel("Percentage Contribution (%)")
     ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
     return ax
 
@@ -405,6 +454,122 @@ def plot_taxa_stacked(
     ax.set_title(cfg.get("stacked_title", f"Top-taxa composition (K={result['k']})"))
     fig.tight_layout()
     return fig
+
+
+def taxa_heatmap_frame(
+    result: Mapping[str, Any],
+    transform: Mapping[str, Any],
+    cfg: Mapping[str, Any],
+    order: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Return taxa percentage composition with taxa as rows and archetypes as columns."""
+    value_space = str(cfg.get("value_space", cfg.get("taxa_value_space", "fitted")))
+    arch = archetype_taxa_values(
+        np.asarray(result["archetypes"], dtype=float), transform, value_space
+    )
+    features = list(result["feature_names"])
+    names = [f"Archetype {i + 1}" for i in range(len(arch))]
+    if order and len(order) == len(names) and set(order) == set(names):
+        idx = [names.index(name) for name in order]
+        arch = arch[idx]
+        names = list(order)
+
+    totals = arch.sum(axis=1)
+    percentages = np.divide(
+        arch,
+        totals[:, None],
+        out=np.zeros_like(arch, dtype=float),
+        where=totals[:, None] > 0,
+    ) * 100.0
+
+    heatmap_cfg = dict(cfg.get("heatmap", {}) or {})
+    configured_n = heatmap_cfg.get("num_taxa")
+    n = int(configured_n if configured_n is not None else cfg.get("num_taxa", 5))
+    n = max(1, min(n, len(features)))
+    selected = set(
+        np.concatenate([np.argsort(row)[::-1][:n] for row in percentages]).astype(int).tolist()
+    )
+    selected = sorted(
+        selected,
+        key=lambda index: (-float(np.max(percentages[:, index])), str(features[index]).lower()),
+    )
+    frame = pd.DataFrame(
+        percentages[:, selected].T,
+        index=pd.Index([features[index] for index in selected], name="taxon"),
+        columns=names,
+    )
+    return frame
+
+
+def _unique_display_labels(labels: Sequence[str]) -> list[str]:
+    counts: dict[str, int] = {}
+    out: list[str] = []
+    for label in labels:
+        count = counts.get(label, 0) + 1
+        counts[label] = count
+        out.append(label if count == 1 else f"{label} ({count})")
+    return out
+
+
+def plot_taxa_heatmap(
+    result: Mapping[str, Any],
+    transform: Mapping[str, Any],
+    cfg: Mapping[str, Any],
+    order: Sequence[str] | None = None,
+):
+    """Plot archetype percentage composition as a taxa-by-archetype heatmap."""
+    heatmap_cfg = dict(cfg.get("heatmap", {}) or {})
+    fig, ax = plt.subplots(figsize=tuple(heatmap_cfg.get("figsize", [10, 8])))
+    _draw_taxa_heatmap(ax, result, transform, cfg, order, add_colorbar=True)
+    fig.tight_layout()
+    return fig
+
+
+def _draw_taxa_heatmap(
+    ax,
+    result: Mapping[str, Any],
+    transform: Mapping[str, Any],
+    cfg: Mapping[str, Any],
+    order: Sequence[str] | None,
+    *,
+    add_colorbar: bool = True,
+):
+    heatmap_cfg = dict(cfg.get("heatmap", {}) or {})
+    frame = taxa_heatmap_frame(result, transform, cfg, order=order)
+
+    scale = str(heatmap_cfg.get("scale", "auto")).lower()
+    if scale == "manual":
+        vmin = float(heatmap_cfg["vmin"])
+        vmax = float(heatmap_cfg["vmax"])
+    elif scale == "auto":
+        vmin = 0.0
+        observed = float(np.nanmax(frame.to_numpy(dtype=float))) if frame.size else 0.0
+        vmax = observed if observed > 0 else 1.0
+    else:
+        raise ValueError("taxa heatmap scale must be 'auto' or 'manual'")
+
+    image = ax.imshow(
+        frame.to_numpy(dtype=float),
+        aspect="auto",
+        interpolation="nearest",
+        cmap=heatmap_cfg.get("cmap", "viridis"),
+        vmin=vmin,
+        vmax=vmax,
+    )
+    ax.set_xticks(np.arange(len(frame.columns)))
+    ax.set_xticklabels(frame.columns)
+    level = int(cfg.get("simplified_taxa_level", -1))
+    max_len = int(cfg.get("max_name_length", 30))
+    display = [_simplify_taxon(name, level, max_len) for name in frame.index]
+    ax.set_yticks(np.arange(len(frame.index)))
+    ax.set_yticklabels(_unique_display_labels(display))
+    ax.set_xlabel("Archetypes")
+    ax.set_ylabel("Taxa")
+    ax.set_title(heatmap_cfg.get("title", f"Taxa composition heatmap (K={result['k']})"))
+    if add_colorbar:
+        colorbar = ax.figure.colorbar(image, ax=ax)
+        colorbar.set_label(heatmap_cfg.get("colorbar_label", "Percentage composition (%)"))
+    return ax
 
 
 def plot_pcoa_dataset(
@@ -735,6 +900,16 @@ def _draw_pcoa_summary_axes(
     order: Sequence[str],
     pc_combos: Sequence[tuple[str, str]],
 ):
+    def pcoa_label(component: str) -> str:
+        match = re.fullmatch(r"PC(\d+)", str(component))
+        return f"PiCo {match.group(1)}" if match else str(component)
+
+    def pcoa_index(component: str) -> int:
+        match = re.fullmatch(r"PC(\d+)", str(component))
+        if not match:
+            raise ValueError(f"PCoA component must look like PC1, PC2, etc.; got {component!r}")
+        return int(match.group(1)) - 1
+
     coords = projection.sample_coords
     metadata = _clean_labels(metadata, task)
     common = coords.index.intersection(metadata.index, sort=False)
@@ -789,11 +964,13 @@ def _draw_pcoa_summary_axes(
             x_pc,
             y_pc,
         )
-        x_explained = projection.extra.proportion_explained.iloc[int(x_pc[-1]) - 1]
-        y_explained = projection.extra.proportion_explained.iloc[int(y_pc[-1]) - 1]
-        ax.set_xlabel(f"{x_pc} ({x_explained:.2%})")
-        ax.set_ylabel(f"{y_pc} ({y_explained:.2%})")
-        ax.set_title(f"{x_pc} vs {y_pc}")
+        x_explained = projection.extra.proportion_explained.iloc[pcoa_index(x_pc)]
+        y_explained = projection.extra.proportion_explained.iloc[pcoa_index(y_pc)]
+        x_label = pcoa_label(x_pc)
+        y_label = pcoa_label(y_pc)
+        ax.set_xlabel(f"{x_label} ({x_explained:.2%})")
+        ax.set_ylabel(f"{y_label} ({y_explained:.2%})")
+        ax.set_title(f"{x_label} vs {y_label}")
         ax.grid(True, alpha=0.15)
 
     if legend_type == "discrete" and axes:
@@ -827,22 +1004,26 @@ def plot_k_summary(
     pcoa_cfg.setdefault("archetype_projection", visualization_cfg.get("archetype_projection", {}))
 
     fig = plt.figure(figsize=tuple(summary_cfg.get("figsize", [18, 12])))
+    width_ratios = summary_cfg.get("width_ratios", [1.0, 1.4])
+    top_width_ratios = summary_cfg.get("top_width_ratios", width_ratios)
+    bottom_width_ratios = summary_cfg.get("bottom_width_ratios", width_ratios)
     outer = fig.add_gridspec(
         2,
-        2,
-        width_ratios=summary_cfg.get("width_ratios", [1.0, 1.4]),
+        1,
         height_ratios=summary_cfg.get("height_ratios", [1.15, 1.0]),
     )
+    top_grid = outer[0, 0].subgridspec(1, 2, width_ratios=top_width_ratios)
+    bottom_grid = outer[1, 0].subgridspec(1, 2, width_ratios=bottom_width_ratios)
 
-    ax_simplex = fig.add_subplot(outer[0, 0])
+    ax_simplex = fig.add_subplot(top_grid[0, 0])
     _draw_simplex(ax_simplex, result, metadata, task, simplex_cfg, order)
     ax_simplex.set_title(summary_cfg.get("simplex_title", "Archetype Simplex"))
 
-    ax_stacked = fig.add_subplot(outer[0, 1])
+    ax_stacked = fig.add_subplot(top_grid[0, 1])
     _draw_similarity_stacked(ax_stacked, result, metadata, task, stacked_cfg, order)
     ax_stacked.set_title(summary_cfg.get("stacked_title", "Similarity Degree Stacked Bar"))
 
-    pcoa_grid = outer[1, 0].subgridspec(1, 2)
+    pcoa_grid = bottom_grid[0, 0].subgridspec(1, 2)
     pcoa_axes = [fig.add_subplot(pcoa_grid[0, 0]), fig.add_subplot(pcoa_grid[0, 1])]
     pc_combos = [
         tuple(x)
@@ -862,9 +1043,16 @@ def plot_k_summary(
         pc_combos,
     )
 
-    ax_taxa = fig.add_subplot(outer[1, 1])
-    _draw_taxa_stacked(ax_taxa, result, transform, taxa_cfg, order)
-    ax_taxa.set_title(summary_cfg.get("taxa_title", "Taxa Contribution"))
+    ax_taxa = fig.add_subplot(bottom_grid[0, 1])
+    taxa_panel = str(summary_cfg.get("taxa_panel", "stacked")).lower()
+    if taxa_panel == "heatmap":
+        _draw_taxa_heatmap(ax_taxa, result, transform, taxa_cfg, order)
+        ax_taxa.set_title(summary_cfg.get("taxa_heatmap_title", "Taxa Composition Heatmap"))
+    elif taxa_panel == "stacked":
+        _draw_taxa_stacked(ax_taxa, result, transform, taxa_cfg, order)
+        ax_taxa.set_title(summary_cfg.get("taxa_title", "Taxa Contribution"))
+    else:
+        raise ValueError("k_summary taxa_panel must be 'stacked' or 'heatmap'")
 
     title = summary_cfg.get("title") or f"Archetypal analysis summary (K={result['k']})"
     fig.suptitle(title, fontsize=float(summary_cfg.get("title_fontsize", 16)))

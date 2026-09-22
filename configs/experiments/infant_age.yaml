@@ -1,0 +1,89 @@
+extends:
+  - ../defaults.yaml
+  - ../datasets/infant.yaml
+
+experiment:
+  name: infant_age
+  description: Infant age task migrated from dataset_configs.json
+
+task:
+  target: age_months
+  legend_type: continuous
+  colorbar_title: Age in months
+  # Retained automatically from prediction.group_column as well; keeping it explicit
+  # makes the repeated-measures requirement visible in this experiment definition.
+  required_metadata_columns: [SUBJECT_ID]
+
+filter:
+  enabled: true
+  control: {"location": ["Sweden", "Finland", "Colorado", "Washington", "Germany", "Georgia"]}
+  normalize: {
+    "age_months": [[0,3], [3,6], [6,12], [12,24], [24,36], [36,48], [48,60], [60, 2000]]
+  }               
+  continuous: true
+  tolerance: 10
+
+evaluation:
+  discretize_target: true
+  buckets:
+    - [0, 6]
+    - [6, 12]
+    - [12, 18]
+    - [18, 24]
+    - [24, 30]
+    - [30, 36]
+    - [36, 42]
+    - [42, 48]
+    - [48, 54]
+    - [54, 73]
+
+selection:
+  mode: quality
+  fixed_k: 6
+
+prediction:
+  enabled: true
+  # Repeated samples from the same person must remain in the same CV fold.
+  group_column: SUBJECT_ID
+
+stability:
+  enabled: true
+  sampling:
+    # Group-disjoint subsampling also makes held-out projection subject-independent.
+    group_column: SUBJECT_ID
+
+
+visualization:
+  archetype_order: null #[Archetype 4, Archetype 1, Archetype 2, Archetype 3, Archetype 6, Archetype 5]
+  archetype_colors:
+    Archetype 1: 0.1666666667
+    Archetype 2: 0.3333333333
+    Archetype 3: 0.5
+    Archetype 4: 0.6666666667
+    Archetype 5: 0.8333333333
+    Archetype 6: 1.0
+  simplex:
+    cmap: viridis
+  multi_k_simplex:
+    cmap: viridis
+    k_values: [4, 7, 11, 13]
+  stacked_bar:
+    cmap: viridis
+    discretize: true
+    buckets:
+      - [0, 6]
+      - [6, 12]
+      - [12, 18]
+      - [18, 24]
+      - [24, 30]
+      - [30, 36]
+      - [36, 42]
+      - [42, 48]
+      - [48, 54]
+      - [54, 73]
+  pcoa:
+    cmap: viridis
+  umap:
+    cmap: viridis
+  tsne:
+    cmap: viridis

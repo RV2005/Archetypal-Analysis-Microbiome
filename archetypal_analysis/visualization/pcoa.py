@@ -21,6 +21,20 @@ class PCoAVisualizer:
     def _natural_sort_key(value: Any) -> List[Any]:
         """Sort labels alphabetically with numeric chunks in numeric order."""
         return [int(chunk) if chunk.isdigit() else chunk.lower() for chunk in re.split(r"(\d+)", str(value))]
+
+    @staticmethod
+    def _axis_label(component: str) -> str:
+        match = re.fullmatch(r"PC(\d+)", str(component))
+        if match:
+            return f"PiCo {match.group(1)}"
+        return str(component)
+
+    @staticmethod
+    def _component_index(component: str) -> int:
+        match = re.fullmatch(r"PC(\d+)", str(component))
+        if not match:
+            raise ValueError(f"PCoA component must look like PC1, PC2, etc.; got {component!r}")
+        return int(match.group(1)) - 1
     
     def plot_pcoa(self,
                  pcoa_coordinates: pd.DataFrame,
@@ -108,12 +122,14 @@ class PCoAVisualizer:
             )
             
             # Set labels with proportion explained
-            x_explained = pcoa_results.proportion_explained.iloc[int(x_pc[-1]) - 1]
-            y_explained = pcoa_results.proportion_explained.iloc[int(y_pc[-1]) - 1]
+            x_explained = pcoa_results.proportion_explained.iloc[self._component_index(x_pc)]
+            y_explained = pcoa_results.proportion_explained.iloc[self._component_index(y_pc)]
+            x_label = self._axis_label(x_pc)
+            y_label = self._axis_label(y_pc)
             
-            axs[i].set_xlabel(f"{x_pc} ({x_explained:.2%} variance explained)")
-            axs[i].set_ylabel(f"{y_pc} ({y_explained:.2%} variance explained)")
-            axs[i].set_title(f"{x_pc} vs {y_pc}")
+            axs[i].set_xlabel(f"{x_label} ({x_explained:.2%} variance explained)")
+            axs[i].set_ylabel(f"{y_label} ({y_explained:.2%} variance explained)")
+            axs[i].set_title(f"{x_label} vs {y_label}")
             
         # Add legend or colorbar to last plot
         self._add_legend_or_colorbar(

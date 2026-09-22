@@ -11,6 +11,11 @@ import pandas as pd
 from ...analysis.experiments import load_result
 from ...visualization.archetype_ordering import resolve_archetype_order
 from ...visualization.embeddings import compute_projection, project_archetypes_from_similarity
+from ...visualization.stability import (
+    plot_initialization_archetype_violin,
+    plot_initialization_set_violin,
+    plot_sampling_by_fraction_violin,
+)
 from ...visualization.pipeline_plots import (
     build_supplemental_archetypes,
     plot_k_summary,
@@ -20,7 +25,10 @@ from ...visualization.pipeline_plots import (
     plot_projected_pcoa,
     plot_quality_selection,
     plot_similarity_stacked,
+    similarity_stacked_permutation_frame,
+    taxa_heatmap_frame,
     plot_single_simplex,
+    plot_taxa_heatmap,
     plot_taxa_stacked,
     relabel_result_for_visual_order,
     save_figure,
@@ -31,7 +39,7 @@ from .base import PipelineStage, StageContext
 
 class PlotStage(PipelineStage):
     name = "plot"
-    dependencies = ("select",)
+    dependencies = ("select", "stability")
 
     def config_fragment(self, cfg):
         return {"visualization": cfg["visualization"], "task": cfg["task"]}
@@ -66,14 +74,14 @@ class PlotStage(PipelineStage):
         selection = json.loads((ctx.store.stage_dir("select") / "selection.json").read_text())
         selected = [int(k) for k in selection["selected_k"]]
         metadata = pd.read_csv(
-            ctx.store.stage_dir("filter") / "metadata.tsv",
+            ctx.store.stage_dir("qc") / "metadata.tsv",
             sep="\t",
             index_col="sample",
             low_memory=False,
         )
         fit_input = pd.read_csv(fit_dir / "fit_input.tsv", sep="\t", index_col="sample")
         filtered_otu = pd.read_csv(
-            ctx.store.stage_dir("filter") / "otu.tsv",
+            ctx.store.stage_dir("qc") / "otu.tsv",
             sep="\t",
             index_col="sample",
             low_memory=False,
@@ -90,6 +98,14 @@ class PlotStage(PipelineStage):
             produced.append(
                 save_figure(fig, path, {"dpi": vis.get("dpi", 180), **dict(local_cfg)})
             )
+
+        def read_optional_table(path: Path) -> pd.DataFrame:
+            if not path.exists():
+                return pd.DataFrame()
+            try:
+                return pd.read_csv(path, sep="\t")
+            except pd.errors.EmptyDataError:
+                return pd.DataFrame()
 
         common = stage_dir / "common"
         common.mkdir(parents=True, exist_ok=True)
@@ -222,27 +238,53 @@ class PlotStage(PipelineStage):
             stacked_cfg = dict(vis.get("stacked_bar", {}) or {})
             stacked_cfg.setdefault("archetype_colors", vis.get("archetype_colors"))
             if stacked_cfg.get("enabled", True):
+                stacked_perms_path = k_dir / "similarity_stacked_bar_permutation.tsv"
+                similarity_stacked_permutation_frame(result, metadata, task, stacked_cfg, order=order).to_csv(
+                    stacked_perms_path,
+                    sep="\t",
+                    index=False,
+                )
+                produced.append(stacked_perms_path)
                 emit(
                     plot_similarity_stacked(result, metadata, task, stacked_cfg, order=order),
                     k_dir / f"similarity_stacked_bar.{ext}",
                     stacked_cfg,
                 )
 
-            # Per-K taxa output intentionally keeps only the stacked contribution plot.
             taxa_cfg = dict(vis.get("taxa", {}) or {})
-            if taxa_cfg.get("enabled", True) and taxa_cfg.get("stacked_enabled", True):
-                visual_top_taxa_path = k_dir / "visual_top_taxa.tsv"
-                visual_top_taxa_frame(result, transform, taxa_cfg, order=order).to_csv(
-                    visual_top_taxa_path,
-                    sep="\t",
-                    index=False,
-                )
-                produced.append(visual_top_taxa_path)
-                emit(
-                    plot_taxa_stacked(result, transform, taxa_cfg, order=order),
-                    k_dir / f"taxa_stacked_bar.{ext}",
-                    taxa_cfg,
-                )
+            taxa_cfg.setdefault(
+                "value_space",
+                ctx.config["analysis"].get("top_taxa_value_space", ctx.config["analysis"].get("taxa_value_space", "fitted")),
+            )
+            if taxa_cfg.get("enabled", True):
+                if taxa_cfg.get("stacked_enabled", True):
+                    visual_top_taxa_path = k_dir / "visual_top_taxa.tsv"
+                    visual_top_taxa_frame(result, transform, taxa_cfg, order=order).to_csv(
+                        visual_top_taxa_path,
+                        sep="\t",
+                        index=False,
+                    )
+                    produced.append(visual_top_taxa_path)
+                    emit(
+                        plot_taxa_stacked(result, transform, taxa_cfg, order=order),
+                        k_dir / f"taxa_stacked_bar.{ext}",
+                        taxa_cfg,
+                    )
+
+                heatmap_cfg = dict(taxa_cfg.get("heatmap", {}) or {})
+                if heatmap_cfg.get("enabled", True):
+                    heatmap_data_path = k_dir / "taxa_heatmap.tsv"
+                    taxa_heatmap_frame(result, transform, taxa_cfg, order=order).to_csv(
+                        heatmap_data_path,
+                        sep="\t",
+                        index_label="taxon",
+                    )
+                    produced.append(heatmap_data_path)
+                    emit(
+                        plot_taxa_heatmap(result, transform, taxa_cfg, order=order),
+                        k_dir / f"taxa_heatmap.{ext}",
+                        heatmap_cfg,
+                    )
 
             if "pcoa" in projection_cache and (vis.get("pcoa", {}) or {}).get("enabled", True):
                 pcoa_cfg = self._embedding_cfg(vis, "pcoa")
@@ -277,6 +319,64 @@ class PlotStage(PipelineStage):
                     k_dir / f"{name}.{ext}",
                     emb_cfg,
                 )
+
+            stability_plot_cfg = dict(vis.get("stability", {}) or {})
+            if stability_plot_cfg.get("enabled", True):
+                stability_dir = ctx.store.stage_dir("stability")
+                init_arch_path = stability_dir / "initialization_archetype_metrics.tsv"
+                init_run_path = stability_dir / "initialization_run_metrics.tsv"
+                sampling_arch_path = stability_dir / "sampling_archetype_metrics.tsv"
+                sampling_run_path = stability_dir / "sampling_run_metrics.tsv"
+                if init_arch_path.exists():
+                    init_arch = read_optional_table(init_arch_path)
+                    if not init_arch.empty and "k" in init_arch.columns:
+                        local = init_arch.loc[pd.to_numeric(init_arch["k"], errors="coerce") == k]
+                        if not local.empty:
+                            emit(
+                                plot_initialization_archetype_violin(local, "max_cosine_similarity", stability_plot_cfg),
+                                k_dir / f"initialization_cosine_violin.{ext}",
+                                stability_plot_cfg,
+                            )
+                            emit(
+                                plot_initialization_archetype_violin(local, "min_euclidean_distance", stability_plot_cfg),
+                                k_dir / f"initialization_euclidean_violin.{ext}",
+                                stability_plot_cfg,
+                            )
+                if init_run_path.exists():
+                    init_runs = read_optional_table(init_run_path)
+                    if not init_runs.empty and "k" in init_runs.columns:
+                        local = init_runs.loc[pd.to_numeric(init_runs["k"], errors="coerce") == k]
+                        if not local.empty:
+                            emit(
+                                plot_initialization_set_violin(local, "normalized_wasserstein_distance", stability_plot_cfg),
+                                k_dir / f"initialization_wasserstein_violin.{ext}",
+                                stability_plot_cfg,
+                            )
+                if sampling_arch_path.exists():
+                    sampling_arch = read_optional_table(sampling_arch_path)
+                    if not sampling_arch.empty and "k" in sampling_arch.columns:
+                        local = sampling_arch.loc[pd.to_numeric(sampling_arch["k"], errors="coerce") == k]
+                        if not local.empty:
+                            emit(
+                                plot_sampling_by_fraction_violin(local, "max_cosine_similarity", stability_plot_cfg),
+                                k_dir / f"sampling_cosine_by_fraction_violin.{ext}",
+                                stability_plot_cfg,
+                            )
+                            emit(
+                                plot_sampling_by_fraction_violin(local, "min_euclidean_distance", stability_plot_cfg),
+                                k_dir / f"sampling_euclidean_by_fraction_violin.{ext}",
+                                stability_plot_cfg,
+                            )
+                if sampling_run_path.exists():
+                    sampling_runs = read_optional_table(sampling_run_path)
+                    if not sampling_runs.empty and "k" in sampling_runs.columns:
+                        local = sampling_runs.loc[pd.to_numeric(sampling_runs["k"], errors="coerce") == k]
+                        if not local.empty:
+                            emit(
+                                plot_sampling_by_fraction_violin(local, "normalized_wasserstein_distance", stability_plot_cfg),
+                                k_dir / f"sampling_wasserstein_by_fraction_violin.{ext}",
+                                stability_plot_cfg,
+                            )
 
             summary_cfg = vis.get("k_summary", {}) or {}
             if summary_cfg.get("enabled", True):

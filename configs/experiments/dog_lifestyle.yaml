@@ -18,14 +18,20 @@ task:
     Foragers: "#70453c"
 
 filter:
-  exclude_target_values: [unknown]
+  enabled: true
+  control: {}
+  normalize: {
+    "Lifestyle": ["1.Industrial", "2.Urban", "3.Pastoralist", "4.Agrarian", "5.Foragers"]
+  }               
+  continuous: false
+  tolerance: 1.5
 
 selection:
-  mode: fixed
+  mode: quality
   fixed_k: 8
 
 visualization:
-  archetype_order: [Archetype 1, Archetype 6, Archetype 2, Archetype 3, Archetype 5, Archetype 8, Archetype 7, Archetype 4]
+  archetype_order: null # [Archetype 1, Archetype 6, Archetype 2, Archetype 3, Archetype 5, Archetype 8, Archetype 7, Archetype 4]
   archetype_colors:
     Archetype 1: "#d62728"
     Archetype 2: "#fc6a2c"
@@ -39,3 +45,9 @@ visualization:
     k_values: [4, 7, 11, 13]
   taxa:
     num_taxa: 5
+
+prediction:
+  enabled: true
+
+stability:
+  enabled: true

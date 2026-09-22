@@ -56,7 +56,8 @@ qc:
 
 fit:
   # k_values: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
-  k_values: [5, 6, 7, 8]
+  # k_values: [5, 6, 7, 8]
+  k_values: [3, 4, 5, 6, 7, 8, 9, 10]
   method: pgd
   max_iter: 10000
   random_state: 42
@@ -68,7 +69,7 @@ fit:
       kwargs:
         const: 1000
   preprocessing:
-    mode: clr  # raw_counts | log | relative_abundance | clr
+    mode: log  # raw_counts | log | relative_abundance | clr
     log_base: 2
     pseudocount: 1.0
 
@@ -101,13 +102,129 @@ selection:
   # reconstruction = lowest K whose reconstruction error is within n% of the minimum.
   mode: all
   fixed_k: null
-  within_percent: 5.0
+  within_percent: 10.0
   reconstruction_metric: relative_frobenius_error
 
 analysis:
   modules: [sample_scores, dominance, metadata_association, top_taxa]
   dominance_threshold: 0.5
   num_top_taxa: 5
+  taxa_value_space: fitted      # fitted | inverse
+  metrics:
+    enabled: true
+    # Benchmarks receive fuzzy c-means memberships with cluster count = dimension.
+    fuzzy_m: 2.0
+    fuzzy_max_iter: 300
+    fuzzy_tol: 1.0e-5
+    fuzzy_silhouette_alpha: 1.0
+    random_state: 42
+    # Continuous metadata uses evaluation.buckets when configured; otherwise qcut bins.
+    continuous_bins: 10
+    # Exact high-dimensional hulls grow rapidly; dimensions above this are projected
+    # deterministically onto leading intrinsic SVD axes for the hull-coverage metric.
+    convex_hull_max_dimension: 8
+
+
+
+benchmarks:
+  enabled: true
+  # Every method consumes 03_fit/fit_input.tsv so preprocessing and samples match AA exactly.
+  # K AA weights sum to one, so their intrinsic dimension is K-1. PCA/PCoA are fitted
+  # once at max(K-1); UMAP/t-SNE are independently fitted at each configured K-1.
+  pca:
+    enabled: true
+    svd_solver: auto
+    random_state: 42
+    kwargs: {}
+  pcoa:
+    enabled: true
+    # Euclidean is valid for every fit preprocessing mode, including CLR.
+    # jensenshannon and braycurtis is available for non-negative fit inputs.
+    distance_metric: braycurtis
+  umap:
+    enabled: true
+    n_neighbors: 15
+    min_dist: 0.1
+    metric: euclidean
+    random_state: 42
+    kwargs: {}
+  tsne:
+    enabled: true
+    perplexity: 30
+    learning_rate: auto
+    init: pca
+    metric: euclidean
+    max_iter: 1000
+    random_state: 42
+    # auto uses Barnes-Hut for 2-3 dimensions and exact t-SNE above 3 dimensions.
+    method: auto
+    kwargs: {}
+  parallel:
+    # 0 means use SLURM_CPUS_PER_TASK, falling back to local CPU count.
+    n_jobs: 0
+    backend: process
+
+# Leakage-safe nested prediction. Each outer fold refits AA and every transformable benchmark
+# on training samples only, then transforms/projects the held-out samples.
+# Disabled globally; the compendium/dog/Hadza experiment configs enable it explicitly.
+prediction:
+  enabled: false
+  target: null                 # null = task.target
+  raw_baseline: qc_otu         # qc_otu = untransformed post-QC OTU; fit_input = AA-preprocessed matrix
+  group_column: null           # preferred repeated-measures ID; groups never cross CV folds
+  # Heterogeneous combined metadata can use different subject-ID columns by study.
+  # If the preferred column is missing/null, these are tried next; conservative
+  # subject-ID aliases can also be discovered from the standardized source metadata.
+  group_fallback_columns: []
+  group_auto_detect: true
+  group_namespace_columns: [project, Study, StudyID, Cohort, location]
+  n_splits: 5
+  random_state: 42
+  # The unsupervised AA/benchmark representation is refitted inside every outer CV fold.
+  # AA held-out samples are projected onto the training-fold archetypes.
+  aa_projection:
+    max_iter: 2000
+    tol: 1.0e-8
+
+  logistic_regression:
+    max_iter: 10000
+    # C is selected by inner CV using only each outer training fold.
+    C_values: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+    inner_cv_splits: 4
+    scoring: balanced_accuracy
+    class_weight: null
+    solver: lbfgs
+    multi_class: auto
+  linear_regression:
+    fit_intercept: true
+
+# AA stability analysis reuses the selected-K fit as the 100% reference. Per-run
+# artifacts are individually fingerprinted, so interrupted sweeps resume without refitting.
+stability:
+  enabled: true
+  profile_space: fitted       # fitted | inverse
+  matching_metric: cosine     # cosine | correlation
+  initialization:
+    enabled: true
+    seeds: [0,1,2,3,4,42]
+  sampling:
+    enabled: true
+    fractions: [0.5, 0.6, 0.7, 0.8, 0.9]
+    repeats: 5
+    random_state: 42
+    continuous_stratify_bins: 10
+    group_column: null         # null inherits prediction.group_column
+    group_fallback_columns: null    # null inherits prediction.group_fallback_columns
+    group_auto_detect: null         # null inherits prediction.group_auto_detect
+    group_namespace_columns: null   # null inherits prediction.group_namespace_columns
+  heldout_projection:
+    enabled: true
+    fractions: [0.8, 0.9]
+    max_iter: 2000
+    tol: 1.0e-8
+  parallel:
+    n_jobs: 0                 # 0 = SLURM_CPUS_PER_TASK / local CPU count
+    backend: process
 
 visualization:
   enabled: true
@@ -149,6 +266,10 @@ visualization:
     grid_alpha: 0.25
     legend_loc: best
 
+  stability:
+    enabled: true
+    figsize: [10, 5]
+
   multi_k_simplex:
     enabled: true
     k_values: null             # null = all fitted K values
@@ -183,6 +304,7 @@ visualization:
   taxa:
     enabled: true
     stacked_enabled: true
+    value_space: fitted         # fitted | inverse
     num_taxa: 5
     ncols: 3
     panel_size: [5, 4]
@@ -190,10 +312,22 @@ visualization:
     simplified_taxa_level: -1
     max_name_length: 30
     label_rotation: 30
+    heatmap:
+      enabled: true
+      # null uses the same top-N-per-archetype union as num_taxa above.
+      num_taxa: null
+      figsize: [14, 8]
+      cmap: viridis
+      # auto: 0 to observed maximum percentage; manual: use vmin/vmax below.
+      scale: auto               # auto | manual
+      vmin: 0.0
+      vmax: 25.0
+      colorbar_label: Percentage composition (%)
+
 
   pcoa:
     enabled: true
-    distance_metric: jensenshannon
+    distance_metric: braycurtis
     n_dimensions: 3
     pc_combinations: [[PC1, PC2], [PC2, PC3], [PC1, PC3]]
     log_transform: true
@@ -241,9 +375,11 @@ visualization:
 
   k_summary:
     enabled: true
-    figsize: [22, 12]
-    width_ratios: [1.0, 1.4]
+    figsize: [28, 16]
+    top_width_ratios: [1.0, 1.4]
+    bottom_width_ratios: [1.0, 1.0]
     height_ratios: [1.15, 1.0]
+    taxa_panel: heatmap          # stacked | heatmap
     pcoa_combinations:
       - [PC1, PC2]
       - [PC2, PC3]

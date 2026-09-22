@@ -12,13 +12,14 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
+from ...data.indexed_io import read_sample_indexed_tsv
 from ...data.preprocessing import apply_preprocessing, resolve_preprocessing_mode
 from ..artifacts import atomic_write_json, stable_hash
 from .base import PipelineStage, StageContext
 
 
 def _read_tsv(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path, sep="\t", index_col="sample", low_memory=False)
+    return read_sample_indexed_tsv(path)
 
 
 def _prepare_fit_input(otu: pd.DataFrame, cfg: Mapping[str, Any]) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -160,7 +161,7 @@ def _fit_one_k(k: int, processed_path: str, fit_cfg: dict[str, Any], k_dir: str,
 
 class FitStage(PipelineStage):
     name = "fit"
-    dependencies = ("filter",)
+    dependencies = ("qc",)
 
     def required_outputs(self, ctx: StageContext) -> list[Path]:
         d = ctx.store.stage_dir(self.name)
@@ -175,8 +176,8 @@ class FitStage(PipelineStage):
         if not overwrite and ctx.store.is_reusable(self.name, fp, outputs):
             return {"status": "reused", "outputs": outputs}
 
-        filter_dir = ctx.store.stage_dir("filter")
-        otu = _read_tsv(filter_dir / "otu.tsv")
+        qc_dir = ctx.store.stage_dir("qc")
+        otu = _read_tsv(qc_dir / "otu.tsv")
         processed, transform = _prepare_fit_input(otu, ctx.config["fit"])
         if processed.empty or processed.shape[1] == 0:
             raise ValueError("AA preprocessing produced an empty matrix")
@@ -199,7 +200,7 @@ class FitStage(PipelineStage):
         per_k_model_cfg.pop("parallel", None)
         per_k_model_cfg.pop("verbose_fit", None)
         per_k_base = stable_hash({
-            "filter": ctx.store.upstream_fingerprint("filter"),
+            "qc": ctx.store.upstream_fingerprint("qc"),
             "fit_model_config": per_k_model_cfg,
             "transform": transform,
         })
