@@ -27,7 +27,7 @@ filter:
   tolerance: 1.5
 
 selection:
-  mode: quality
+  mode: fixed
   fixed_k: 8
 
 visualization:

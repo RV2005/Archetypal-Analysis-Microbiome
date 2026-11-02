@@ -210,6 +210,25 @@ def validate_config(cfg: Mapping[str, Any]) -> None:
         raise ConfigError("prediction.aa_projection.max_iter must be >= 1")
     if float(aa_projection.get("tol", 1e-8)) <= 0:
         raise ConfigError("prediction.aa_projection.tol must be > 0")
+    top_taxa_cfg = prediction.get("top_taxa", {}) or {}
+    if not isinstance(top_taxa_cfg, Mapping):
+        raise ConfigError("prediction.top_taxa must be a mapping")
+    if top_taxa_cfg.get("value_space") is not None and str(top_taxa_cfg["value_space"]).lower() not in {"fitted", "inverse"}:
+        raise ConfigError("prediction.top_taxa.value_space must be null, 'fitted', or 'inverse'")
+    if int(top_taxa_cfg.get("random_repeats", 5)) < 1:
+        raise ConfigError("prediction.top_taxa.random_repeats must be >= 1")
+    forest_cfg = top_taxa_cfg.get("random_forest", {}) or {}
+    if not isinstance(forest_cfg, Mapping):
+        raise ConfigError("prediction.top_taxa.random_forest must be a mapping")
+    if int(forest_cfg.get("n_estimators", 300)) < 1 or int(forest_cfg.get("min_samples_leaf", 1)) < 1:
+        raise ConfigError("prediction.top_taxa.random_forest requires positive n_estimators and min_samples_leaf")
+    top_parallel = top_taxa_cfg.get("parallel", {}) or {}
+    if not isinstance(top_parallel, Mapping):
+        raise ConfigError("prediction.top_taxa.parallel must be a mapping")
+    if str(top_parallel.get("backend", "process")).lower() not in {"process", "sequential"}:
+        raise ConfigError("prediction.top_taxa.parallel.backend must be 'process' or 'sequential'")
+    if int(top_parallel.get("n_jobs", 0) or 0) < 0:
+        raise ConfigError("prediction.top_taxa.parallel.n_jobs must be >= 0")
 
     stability = cfg.get("stability", {}) or {}
     if not isinstance(stability, Mapping):
@@ -283,7 +302,14 @@ def validate_config(cfg: Mapping[str, Any]) -> None:
     mode = str(cfg.get("selection", {}).get("mode", "all")).lower()
     aliases = {"none": "all", "skip": "all"}
     mode = aliases.get(mode, mode)
-    allowed_modes = {"all", "fixed", "quality", "reconstruction"}
+    allowed_modes = {
+        "all",
+        "fixed",
+        "quality",
+        "quality_silhouette",
+        "quality_daviesbouldin",
+        "reconstruction",
+    }
     if mode not in allowed_modes:
         raise ConfigError(f"selection.mode must be one of {sorted(allowed_modes)}")
     if mode == "fixed":
@@ -306,6 +332,22 @@ def validate_config(cfg: Mapping[str, Any]) -> None:
             raise ConfigError("manual taxa heatmap scale requires vmin and vmax")
         if float(taxa_heatmap["vmax"]) <= float(taxa_heatmap["vmin"]):
             raise ConfigError("visualization.taxa.heatmap.vmax must be greater than vmin")
+
+    stability_plot = cfg.get("visualization", {}).get("stability", {}) or {}
+    if not isinstance(stability_plot, Mapping):
+        raise ConfigError("visualization.stability must be a mapping")
+    for key in ("cosine_ylim", "wasserstein_ylim"):
+        limits = stability_plot.get(key, [0.0, 1.0])
+        if (
+            not isinstance(limits, (list, tuple))
+            or len(limits) != 2
+            or float(limits[0]) >= float(limits[1])
+        ):
+            raise ConfigError(f"visualization.stability.{key} must contain two ascending values")
+
+    reverse_order = cfg.get("visualization", {}).get("reverse_order", False)
+    if not isinstance(reverse_order, bool):
+        raise ConfigError("visualization.reverse_order must be a boolean")
 
     ordering = cfg.get("visualization", {}).get("archetype_ordering", {}) or {}
     if not isinstance(ordering, Mapping):

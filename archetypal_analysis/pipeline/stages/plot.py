@@ -126,6 +126,7 @@ class PlotStage(PipelineStage):
 
         multi_cfg = dict(vis.get("multi_k_simplex", {}) or {})
         multi_cfg.setdefault("archetype_order", vis.get("archetype_order"))
+        multi_cfg.setdefault("reverse_order", vis.get("reverse_order", False))
         multi_cfg.setdefault("archetype_ordering", vis.get("archetype_ordering", {}))
         if multi_cfg.get("enabled", True):
             desired = multi_cfg.get("k_values") or ctx.config["fit"]["k_values"]
@@ -148,6 +149,7 @@ class PlotStage(PipelineStage):
         }
         order_cfg = {
             "archetype_order": vis.get("archetype_order"),
+            "reverse_order": vis.get("reverse_order", False),
             "archetype_ordering": vis.get("archetype_ordering", {}),
         }
         resolved_orders = {

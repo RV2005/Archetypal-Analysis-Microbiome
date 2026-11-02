@@ -200,3 +200,39 @@ embeddings with the same row count can also restore the authoritative fit-input 
 position because those artifacts are written in fit-input order. These repairs are recorded in
 `prediction_manifest.json`; ambiguous or stale mismatches still raise an explicit error rather
 than silently pairing the wrong samples.
+
+# AA-ranked taxa prediction
+
+After a pipeline run has produced QC, fit, and selection artifacts, run the
+random-forest taxa experiment by itself:
+
+```bash
+aa-pipeline predict-top-taxa --config configs/experiments/dog_lifestyle.yaml --n-jobs 8
+```
+
+It tests 10, 30, 50, 70, ... taxa and the full fit-input feature count. For
+each selected K and outer CV fold, it ranks taxa from the training-fold AA
+archetypes using the same fitted/inverse value-space conversion as the existing
+`top_taxa` analysis. It interleaves the per-archetype rankings and removes
+duplicates, so the count denotes unique taxa. The random forest receives the
+corresponding columns of that fold's AA fit input. Taxa ranking, preprocessing,
+and model fitting use training samples only. A random-feature baseline draws the
+same number of taxa from each fold's fit-input columns, using the same folds
+and forest settings. It repeats the draw `prediction.top_taxa.random_repeats`
+times (default 5). Its feature sets do not depend on K, so one random line is
+shared across the AA K curves. Existing fold preprocessing and AA models in
+`07_prediction/fold_models` are reused; missing ones are fitted without
+running the rest of the pipeline. Repeated runs reuse completed tasks.
+
+Set `prediction.top_taxa.random_forest` and `prediction.top_taxa.parallel` in
+the experiment YAML to control the forest and workers. `--n-jobs` overrides
+the configured worker count; `0` uses `SLURM_CPUS_PER_TASK` or local CPUs.
+`--overwrite` recomputes the forest tasks. Results are in
+`07_prediction/top_taxa/scores.tsv` and `score_vs_num_taxa.png`. The plot shows
+mean fold macro F1 (categorical targets) or R² (continuous targets). AA error
+bars show fold standard deviations; the random line shows the mean across
+draws and the shaded area spans their range. `scores.tsv` has one row per AA
+count and one row per random draw (`k=0` identifies the shared random baseline).
+Each `K_*/N_*/` and
+`random/N_*/repeat_*/` folder has out-of-fold predictions, fold metrics, and
+the exact selected taxa for each fold.

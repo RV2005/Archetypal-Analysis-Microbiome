@@ -287,13 +287,15 @@ def resolve_archetype_order(
 
     method = str(ordering_cfg.get("method", "association_similarity")).lower()
     if method == "top_association":
-        return top_association_order(profiles)
-    if method == "association_similarity":
-        return optimal_association_similarity_order(
+        order = top_association_order(profiles)
+    elif method == "association_similarity":
+        order = optimal_association_similarity_order(
             profiles,
             metric=str(ordering_cfg.get("similarity_metric", "cosine")),
             exact_max_k=int(ordering_cfg.get("exact_max_k", 15)),
         )
-    raise ValueError(
-        "visualization.archetype_ordering.method must be 'top_association' or 'association_similarity'"
-    )
+    else:
+        raise ValueError(
+            "visualization.archetype_ordering.method must be 'top_association' or 'association_similarity'"
+        )
+    return list(reversed(order)) if cfg.get("reverse_order", False) else order

@@ -13,7 +13,6 @@ conventional dimensionality-reduction benchmarks use K-1 dimensions for comparis
 from __future__ import annotations
 
 from dataclasses import dataclass
-import inspect
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -218,11 +217,13 @@ def _classifier(cfg: Mapping[str, Any], *, C: float) -> Pipeline:
         "max_iter": int(model_cfg.get("max_iter", 5000)),
         "C": float(C),
         "class_weight": model_cfg.get("class_weight"),
-        "solver": str(model_cfg.get("solver", "lbfgs")),
+        # liblinear is deliberately the default here.  The L-BFGS backend has
+        # segfaulted in the Python 3.11/macOS/scikit-learn combination used for
+        # the full nested prediction run, while liblinear is stable for these
+        # small, high-dimensional folds.  It uses one-vs-rest for multiclass data.
+        "solver": str(model_cfg.get("solver", "liblinear")),
         "random_state": int(model_cfg.get("random_state", cfg.get("random_state", 42))),
     }
-    if "multi_class" in inspect.signature(LogisticRegression).parameters:
-        kwargs["multi_class"] = model_cfg.get("multi_class", "auto")
     model = LogisticRegression(**kwargs)
     return Pipeline([("scale", StandardScaler()), ("model", model)])
 

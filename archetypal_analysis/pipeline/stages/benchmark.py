@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -117,7 +118,8 @@ class BenchmarkStage(PipelineStage):
             for args in task_args:
                 results.append(run_benchmark_task(*args))
         elif backend == "process":
-            with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            # Use spawn so workers do not inherit initialized BLAS/OpenMP state.
+            with ProcessPoolExecutor(max_workers=n_jobs, mp_context=mp.get_context("spawn")) as pool:
                 future_map = {
                     pool.submit(run_benchmark_task, *args): (args[0], args[1])
                     for args in task_args

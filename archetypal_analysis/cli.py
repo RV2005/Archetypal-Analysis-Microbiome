@@ -4,9 +4,39 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import tempfile
 
 import yaml
+
+
+def _configure_native_threading() -> None:
+    """Keep native numerical libraries single-threaded inside pipeline workers.
+
+    The Slurm launcher sets these variables too, but ``aa-pipeline`` is also commonly
+    invoked directly.  Leaving the defaults to the host can create a large nested
+    process/thread fan-out and has caused native BLAS/OpenMP crashes during prediction.
+    ``setdefault`` preserves an explicit user or scheduler override.
+    """
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "NUMBA_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+    ):
+        os.environ.setdefault(name, "1")
+
+    # UMAP decorates functions with Numba's on-disk cache enabled.  Its default
+    # in-tree cache is unavailable when the environment's site-packages is
+    # read-only (common on managed/HPC installs); Numba may then fail while
+    # importing UMAP.  Use a writable per-user temporary cache by default.
+    cache_dir = Path(os.environ.get("NUMBA_CACHE_DIR") or Path(tempfile.gettempdir()) / "aa-pipeline-numba-cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("NUMBA_CACHE_DIR", str(cache_dir))
 
 
 def _cmd_run(args) -> int:
@@ -19,6 +49,18 @@ def _cmd_run(args) -> int:
     if not args.quiet:
         print("\nCompleted stages:", ", ".join(result))
         print("Artifacts:", runner.store.root)
+    return 0
+
+
+def _cmd_predict_top_taxa(args) -> int:
+    from .pipeline.config import load_config
+    from .pipeline.prediction_top_taxa import run_top_taxa_prediction
+
+    output = run_top_taxa_prediction(
+        load_config(args.config), n_jobs=args.n_jobs, overwrite=args.overwrite
+    )
+    print(f"Top-taxa prediction scores: {output / 'scores.tsv'}")
+    print(f"Top-taxa prediction plot: {output / 'score_vs_num_taxa.png'}")
     return 0
 
 
@@ -71,6 +113,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--quiet", action="store_true")
     run.set_defaults(func=_cmd_run)
 
+    top_taxa = sub.add_parser(
+        "predict-top-taxa", help="Predict metadata from AA-ranked taxa using existing pipeline artifacts"
+    )
+    top_taxa.add_argument("--config", required=True, help="Experiment YAML")
+    top_taxa.add_argument("--n-jobs", type=int, default=None, help="Parallel taxa-count tasks; 0 uses allocated CPUs")
+    top_taxa.add_argument("--overwrite", action="store_true", help="Recompute cached taxa-count tasks")
+    top_taxa.set_defaults(func=_cmd_predict_top_taxa)
+
     status = sub.add_parser("status", help="Show stage completion markers")
     status.add_argument("--config", required=True)
     status.set_defaults(func=_cmd_status)
@@ -92,6 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    _configure_native_threading()
     args = build_parser().parse_args(argv)
     return int(args.func(args))
 

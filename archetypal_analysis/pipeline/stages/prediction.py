@@ -167,9 +167,11 @@ class PredictionStage(PipelineStage):
     dependencies = ("select",)
 
     def config_fragment(self, cfg):
+        prediction_cfg = dict(cfg.get("prediction", {}) or {})
+        prediction_cfg.pop("top_taxa", None)  # standalone experiment has its own task cache
         return {
             "prediction_schema": PREDICTION_SCHEMA_VERSION,
-            "prediction": cfg.get("prediction", {}),
+            "prediction": prediction_cfg,
             "benchmarks": cfg.get("benchmarks", {}),
             "task": cfg["task"],
             "fit": cfg["fit"],

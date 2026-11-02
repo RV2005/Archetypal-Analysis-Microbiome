@@ -74,6 +74,28 @@ def select_k(metrics: pd.DataFrame, cfg: Mapping[str, Any], k_values: list[int])
             "reason": f"Lowest K with normalized silhouette - normalized Davies-Bouldin within {tolerance:g}% of the maximum.",
         }
 
+    raw_quality_modes = {
+        "quality_silhouette": ("silhouette", True),
+        "quality_daviesbouldin": ("davies_bouldin", False),
+    }
+    if mode in raw_quality_modes:
+        metric, maximize = raw_quality_modes[mode]
+        valid = frame.dropna(subset=[metric])
+        if valid.empty:
+            raise ValueError(f"No finite {metric} values available for K selection")
+        best = float(valid[metric].max() if maximize else valid[metric].min())
+        eligible = valid.loc[_within_best_percent(valid[metric], best, tolerance, maximize=maximize)]
+        k = int(eligible["k"].min())
+        direction = "maximum" if maximize else "minimum"
+        return {
+            "mode": mode,
+            "selected_k": [k],
+            "within_percent": tolerance,
+            "metric": metric,
+            "best_score": best,
+            "reason": f"Lowest K with raw {metric} within {tolerance:g}% of the {direction}.",
+        }
+
     if mode == "reconstruction":
         metric = str(cfg.get("reconstruction_metric", "relative_frobenius_error"))
         if metric not in frame.columns:

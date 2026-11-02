@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -215,7 +216,9 @@ class FitStage(PipelineStage):
             for task in tasks:
                 results.append(_fit_one_k(*task))
         else:
-            with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            # Do not fork after NumPy/SciPy have initialized native thread pools.
+            # Forking those runtimes is a common source of intermittent segfaults.
+            with ProcessPoolExecutor(max_workers=n_jobs, mp_context=mp.get_context("spawn")) as pool:
                 future_map = {pool.submit(_fit_one_k, *task): task[0] for task in tasks}
                 for future in as_completed(future_map):
                     k = future_map[future]

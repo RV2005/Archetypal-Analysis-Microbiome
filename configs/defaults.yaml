@@ -99,10 +99,12 @@ selection:
   # all = skip K selection and run K-dependent downstream outputs for every K.
   # fixed = use fixed_k.
   # quality = lowest K whose normalized silhouette - normalized DB is within n% of max.
+  # quality_silhouette = lowest K whose raw silhouette is within n% of max.
+  # quality_daviesbouldin = lowest K whose raw Davies-Bouldin is within n% of min.
   # reconstruction = lowest K whose reconstruction error is within n% of the minimum.
   mode: all
   fixed_k: null
-  within_percent: 10.0
+  within_percent: 5.0
   reconstruction_metric: relative_frobenius_error
 
 analysis:
@@ -193,10 +195,23 @@ prediction:
     inner_cv_splits: 4
     scoring: balanced_accuracy
     class_weight: null
-    solver: lbfgs
-    multi_class: auto
+    solver: liblinear
   linear_regression:
     fit_intercept: true
+  top_taxa:
+    # Standalone: aa-pipeline predict-top-taxa --config <experiment.yaml>
+    # Counts are 10, 30, 50, ... plus the full fit-input feature count.
+    value_space: null         # null inherits analysis.top_taxa_value_space; fitted | inverse
+    random_repeats: 5         # independent random feature sets per fold and taxa count
+    random_forest:
+      n_estimators: 300
+      max_depth: null
+      min_samples_leaf: 1
+      max_features: sqrt
+      class_weight: null
+    parallel:
+      backend: process        # process | sequential
+      n_jobs: 0               # 0 = SLURM_CPUS_PER_TASK or available CPUs
 
 # AA stability analysis reuses the selected-K fit as the 100% reference. Per-run
 # artifacts are individually fingerprinted, so interrupted sweeps resume without refitting.
@@ -233,6 +248,7 @@ visualization:
   dpi: 180
   archetype_colors: {}
   archetype_order: null
+  reverse_order: false          # Reverse the automatically computed similarity order.
 
   archetype_ordering:
     enabled: true
@@ -270,6 +286,8 @@ visualization:
   stability:
     enabled: true
     figsize: [10, 5]
+    cosine_ylim: [0.0, 1.0]
+    wasserstein_ylim: [0.0, 1.0]
 
   multi_k_simplex:
     enabled: true

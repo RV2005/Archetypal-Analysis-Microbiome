@@ -30,6 +30,30 @@ def test_reconstruction_selection_picks_lowest_eligible_k():
     assert result["selected_k"] == [4]
 
 
+def test_raw_silhouette_selection_maximizes_silhouette():
+    metrics = pd.DataFrame({
+        "k": [3, 4, 5],
+        "silhouette": [0.20, 0.40, 0.35],
+        "davies_bouldin": [1.5, 1.0, 1.1],
+    })
+    result = select_k(metrics, {"mode": "quality_silhouette", "within_percent": 0}, [3, 4, 5])
+    assert result["selected_k"] == [4]
+    assert result["metric"] == "silhouette"
+    assert result["best_score"] == 0.40
+
+
+def test_raw_davies_bouldin_selection_minimizes_davies_bouldin():
+    metrics = pd.DataFrame({
+        "k": [3, 4, 5],
+        "silhouette": [0.20, 0.40, 0.35],
+        "davies_bouldin": [1.5, 1.0, 1.1],
+    })
+    result = select_k(metrics, {"mode": "quality_daviesbouldin", "within_percent": 0}, [3, 4, 5])
+    assert result["selected_k"] == [4]
+    assert result["metric"] == "davies_bouldin"
+    assert result["best_score"] == 1.0
+
+
 def test_all_and_fixed_modes():
     metrics = pd.DataFrame({"k": [3, 4], "silhouette": [0, 0], "davies_bouldin": [0, 0]})
     assert select_k(metrics, {"mode": "all"}, [3, 4])["selected_k"] == [3, 4]

@@ -82,6 +82,28 @@ def test_explicit_order_overrides_metadata_ordering():
     assert order == explicit
 
 
+def test_reverse_order_reverses_automatic_similarity_order():
+    similarity = pd.DataFrame(
+        [[0.9, 0.1], [0.1, 0.9]],
+        index=["s1", "s2"],
+        columns=["Archetype 1", "Archetype 2"],
+    )
+    metadata = pd.DataFrame({"group": ["A", "B"]}, index=similarity.index)
+    base_cfg = {
+        "archetype_ordering": {"enabled": True, "method": "top_association"},
+    }
+    order = resolve_archetype_order(
+        _result(similarity), metadata, {"target": "group", "legend_type": "discrete"}, base_cfg
+    )
+    reversed_order = resolve_archetype_order(
+        _result(similarity),
+        metadata,
+        {"target": "group", "legend_type": "discrete"},
+        {**base_cfg, "reverse_order": True},
+    )
+    assert reversed_order == list(reversed(order))
+
+
 def test_large_k_fallback_is_deterministic_and_complete():
     rng = np.random.default_rng(7)
     profiles = pd.DataFrame(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -299,6 +300,7 @@ class StabilityStage(PipelineStage):
             elif backend == "process":
                 with ProcessPoolExecutor(
                     max_workers=n_jobs,
+                    mp_context=mp.get_context("spawn"),
                     initializer=initialize_stability_worker,
                     initargs=(str(fit_input_path),),
                 ) as pool:

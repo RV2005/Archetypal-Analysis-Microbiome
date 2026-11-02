@@ -27,22 +27,20 @@ filter:
   tolerance: 1.5
 
 selection:
-  mode: quality
+  mode: fixed
   fixed_k: 8
 
 visualization:
   archetype_order: null # [Archetype 1, Archetype 6, Archetype 2, Archetype 3, Archetype 5, Archetype 8, Archetype 7, Archetype 4]
   archetype_colors:
-    Archetype 1: "#d62728"
-    Archetype 2: "#fc6a2c"
-    Archetype 3: "#1D921D"
-    Archetype 4: "#70453c"
+    Archetype 1: "#e377c2"
+    Archetype 2: "#982ead"
+    Archetype 3: "#d62728"
+    Archetype 4: "#fc6a2c"
     Archetype 5: "#1d6ea8"
     Archetype 6: "#11d07d"
-    Archetype 7: "#982ead"
-    Archetype 8: "#e377c2"
-  multi_k_simplex:
-    k_values: null
+    Archetype 7: "#70453c"
+    Archetype 8: "#1D921D"
   taxa:
     num_taxa: 5
 

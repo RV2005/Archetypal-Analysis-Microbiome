@@ -142,6 +142,13 @@ Regenerate only an explicitly requested stage while reusing dependencies:
 aa-pipeline run --config configs/experiments/dog_lifestyle.yaml --stages plot --overwrite
 ```
 
+Run the AA-ranked-taxa random-forest experiment with a repeated random-taxa
+baseline from existing artifacts:
+
+```bash
+aa-pipeline predict-top-taxa --config configs/experiments/dog_lifestyle.yaml --n-jobs 8
+```
+
 Inspect resolved inheritance or status:
 
 ```bash
@@ -164,6 +171,8 @@ sbatch --export=ALL,CONFIG=configs/experiments/dog_lifestyle.yaml,CONDA_ENV=GHG_
 - `all`: skip selection; all K values get K-dependent downstream analysis/plots.
 - `fixed`: use `selection.fixed_k`.
 - `quality`: min-max normalize Silhouette and Davies-Bouldin over K, calculate `silhouette_normalized - davies_bouldin_normalized`, and choose the lowest K within `within_percent` of the maximum score.
+- `quality_silhouette`: use raw Silhouette, choosing the lowest K within `within_percent` of the highest score.
+- `quality_daviesbouldin`: use raw Davies-Bouldin, choosing the lowest K within `within_percent` of the lowest score.
 - `reconstruction`: reconstruct fitted-space samples as `similarity_degree @ archetypes`, evaluate the configured reconstruction metric, and choose the lowest K within `within_percent` of the minimum error.
 
 Two ready-to-run examples are included: `example_quality_selection.yaml` and `example_reconstruction_selection.yaml`.
