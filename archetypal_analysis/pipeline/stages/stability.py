@@ -22,7 +22,6 @@ from ...analysis.stability import (
     initialize_stability_worker,
     project_onto_archetypes,
     run_stability_fit_task,
-    stratified_common_test_splits,
     stratified_subsample_ids,
 )
 from ..artifacts import atomic_write_json, file_signature, stable_hash
@@ -94,7 +93,6 @@ class StabilityStage(PipelineStage):
             d / "initialization_set_summary.tsv",
             d / "sampling_archetype_summary.tsv",
             d / "sampling_set_summary.tsv",
-            d / "common_test_samples.tsv",
         ]
 
     @staticmethod
@@ -207,7 +205,6 @@ class StabilityStage(PipelineStage):
 
         tasks: list[StabilityTask] = []
         task_holdouts: dict[str, list[str]] = {}
-        common_test_ids: list[str] = []
         fit_upstream = ctx.store.upstream_fingerprint("fit")
         init_cfg = dict(cfg.get("initialization", {}) or {})
         if init_cfg.get("enabled", True):
@@ -245,38 +242,20 @@ class StabilityStage(PipelineStage):
             repeats = int(sampling_cfg.get("repeats", 5))
             sampling_seed = int(sampling_cfg.get("random_state", 42))
             continuous_bins = int(sampling_cfg.get("continuous_stratify_bins", 10))
-            projection_cfg = dict(cfg.get("heldout_projection", {}) or {})
-            projection_enabled = bool(projection_cfg.get("enabled", True))
-            test_frac = float(projection_cfg.get("test_frac", 0.2))
-            if projection_enabled:
-                common_test_ids, split_cache = stratified_common_test_splits(
-                    metadata,
-                    target,
-                    legend_type,
-                    fractions,
-                    repeats,
-                    test_frac,
-                    sampling_seed,
-                    group_column=sampling_group,
-                    continuous_bins=continuous_bins,
-                )
-            else:
-                split_cache = {}
+            split_cache: dict[tuple[float, int], tuple[list[str], list[str], int]] = {}
             for fraction in fractions:
                 for repeat in range(repeats):
-                    if projection_enabled:
-                        train_ids, seed = split_cache[(fraction, repeat)]
-                    else:
-                        seed = sampling_seed + int(round(fraction * 1000)) * 1000 + repeat
-                        train_ids, _unused_ids = stratified_subsample_ids(
-                            metadata,
-                            target,
-                            legend_type,
-                            fraction,
-                            seed,
-                            group_column=sampling_group,
-                            continuous_bins=continuous_bins,
-                        )
+                    seed = sampling_seed + int(round(fraction * 1000)) * 1000 + repeat
+                    train_ids, heldout_ids = stratified_subsample_ids(
+                        metadata,
+                        target,
+                        legend_type,
+                        fraction,
+                        seed,
+                        group_column=sampling_group,
+                        continuous_bins=continuous_bins,
+                    )
+                    split_cache[(fraction, repeat)] = (train_ids, heldout_ids, seed)
                     for k in selected_k:
                         frac_label = int(round(fraction * 100))
                         out = stage_dir / "sampling" / f"K_{k:03d}" / f"fraction_{frac_label:03d}" / f"repeat_{repeat:03d}"
@@ -303,10 +282,7 @@ class StabilityStage(PipelineStage):
                             fingerprint=task_fp,
                         )
                         tasks.append(task)
-                        if projection_enabled:
-                            task_holdouts[task.output_dir] = common_test_ids
-
-        pd.DataFrame({"sample": common_test_ids}).to_csv(outputs[11], sep="\t", index=False)
+                        task_holdouts[task.output_dir] = heldout_ids
 
         parallel = dict(cfg.get("parallel", {}) or {})
         configured_jobs = int(parallel.get("n_jobs", 0) or 0)
@@ -356,7 +332,6 @@ class StabilityStage(PipelineStage):
         projection_cfg = dict(cfg.get("heldout_projection", {}) or {})
         heldout_fractions = {round(float(x), 10) for x in projection_cfg.get("fractions", [0.8, 0.9])}
         projection_enabled = bool(projection_cfg.get("enabled", True))
-        test_frac = float(projection_cfg.get("test_frac", 0.2))
         extra_outputs: list[Path] = []
 
         result_by_out = {row["output_dir"]: row for row in run_results}
@@ -435,7 +410,6 @@ class StabilityStage(PipelineStage):
                         heldout_metric_rows.append(
                             {
                                 **base,
-                                "test_frac": test_frac,
                                 "n_heldout": len(heldout_ids),
                                 "projection_iterations": projection_info["iterations"],
                                 "projection_converged": projection_info["converged"],
@@ -508,8 +482,6 @@ class StabilityStage(PipelineStage):
             "initialization_runs": int(len(init_runs)),
             "sampling_runs": int(len(sampling_runs)),
             "heldout_projection_runs": int(len(heldout_metrics)),
-            "heldout_test_frac": test_frac if projection_enabled else None,
-            "heldout_test_samples": int(len(common_test_ids)),
             "sampling_group_column": configured_sampling_group,
             "resolved_sampling_group_column": sampling_group if configured_sampling_group else None,
             "group_resolution": group_resolution,

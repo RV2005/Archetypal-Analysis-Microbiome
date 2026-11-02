@@ -15,7 +15,6 @@ from archetypal_analysis.analysis.stability import (
     compare_archetypes,
     normalized_wasserstein_distance,
     project_onto_archetypes,
-    stratified_common_test_splits,
     stratified_subsample_ids,
 )
 
@@ -172,28 +171,6 @@ def test_grouped_sampling_keeps_groups_entirely_train_or_heldout():
         metadata, "target", "discrete", 0.8, 123, group_column="person"
     )
     assert set(metadata.loc[train, "person"]).isdisjoint(set(metadata.loc[heldout, "person"]))
-
-
-def test_sampling_fractions_share_one_common_test_set():
-    index = [f"s{i}" for i in range(100)]
-    metadata = pd.DataFrame(
-        {"target": ["A"] * 50 + ["B"] * 50},
-        index=index,
-    )
-    test_ids, splits = stratified_common_test_splits(
-        metadata,
-        "target",
-        "discrete",
-        fractions=[0.5, 0.7, 0.9],
-        repeats=2,
-        test_frac=0.2,
-        random_state=123,
-    )
-
-    assert len(test_ids) == 20
-    for (fraction, _repeat), (train_ids, _seed) in splits.items():
-        assert set(train_ids).isdisjoint(test_ids)
-        assert len(train_ids) == int(80 * fraction)
 
 
 def test_group_columns_do_not_invalidate_filtered_aa_metadata():
