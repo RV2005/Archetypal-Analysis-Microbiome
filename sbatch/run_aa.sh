@@ -3,10 +3,8 @@
 #SBATCH --partition=compute
 #SBATCH --time=48:00:00
 #SBATCH --mem=40G
-#SBATCH --cpus-per-task=11
-#SBATCH --output=slurm-%x-%j.out
-
-set -euo pipefail
+#SBATCH --cpus-per-task=24
+#SBATCH --output=/scratch/rv2340/Archetypal_Analysis_Project/slurm_outs/pipeline/pipeline-%x-%j.out
 
 # Usage:
 #   sbatch --export=ALL,CONFIG=configs/experiments/dog_lifestyle.yaml,CONDA_ENV=GHG_work sbatch/run_aa.sh
@@ -15,19 +13,17 @@ set -euo pipefail
 #   OVERWRITE=1                   overwrite explicitly requested stages
 #   CONDA_ENV=...                 activate this conda environment when conda is available
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="/scratch/rv2340/Archetypal_Analysis_Project/Archetypal-Analysis"
 cd "$ROOT"
 
 CONFIG="${CONFIG:-configs/experiments/dog_lifestyle.yaml}"
 STAGES="${STAGES:-all}"
 OVERWRITE="${OVERWRITE:-0}"
 
-if [[ -n "${CONDA_ENV:-}" ]] && command -v conda >/dev/null 2>&1; then
-  CONDA_BASE="$(conda info --base)"
-  # shellcheck disable=SC1090
-  source "$CONDA_BASE/etc/profile.d/conda.sh"
-  conda activate "$CONDA_ENV"
-fi
+CONDA_SOURCE="${NCA_CONDA_SOURCE:-/share/apps/NYUAD5/miniconda/3-4.11.0/bin/activate}"
+CONDA_ENV="${NCA_CONDA_ENV:-GHG_work}"
+
+source "${CONDA_SOURCE}" "${CONDA_ENV}"
 
 # AA K values are parallelized as processes. Keep BLAS/OpenMP at one thread per process
 # to prevent nested oversubscription inside a single Slurm allocation.

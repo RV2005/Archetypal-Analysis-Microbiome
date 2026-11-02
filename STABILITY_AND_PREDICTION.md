@@ -157,19 +157,26 @@ computed for every subsample fit.
 
 ## Held-out projection
 
-The 80% and 90% sampling fits are reused for held-out projection by default; no extra AA
+Held-out projection first reserves one stratified test set. Every configured sampling
+fraction and repeat is then drawn only from the remaining fit pool, and every projection
+is evaluated on that same test set. The sampling fits are reused directly; no extra AA
 fit is performed:
 
 ```yaml
 stability:
   heldout_projection:
     enabled: true
+    test_frac: 0.2
     fractions: [0.8, 0.9]
     max_iter: 2000
     tol: 1.0e-8
 ```
 
-For omitted samples `X` and fixed subset-derived archetypes `Z`, the pipeline solves
+Here a sampling fraction of `0.7` means 70% of the post-test fit pool. For example,
+`test_frac: 0.2` and sampling fraction `0.7` fit AA on 56% of all eligible samples and
+evaluate it on the common 20% test set.
+
+For common test samples `X` and fixed subset-derived archetypes `Z`, the pipeline solves
 
 ```text
 min_A ||X - A Z||_F^2
@@ -179,8 +186,9 @@ subject to A_ij >= 0 and every row of A sums to 1.
 A vectorized projected-gradient solver projects every update onto the probability simplex.
 The resulting memberships are saved as `heldout_projection.tsv` and the existing AA
 representation metrics plus native projection reconstruction RSS are collected in
-`heldout_projection_metrics.tsv`. With grouped sampling, held-out subjects are completely
-absent from the subset used to learn the archetypes.
+`heldout_projection_metrics.tsv`. The exact common test IDs are recorded in
+`common_test_samples.tsv`. With grouped sampling, test subjects are completely absent from
+every subset used to learn the archetypes.
 
 ## Parallelism and reuse
 

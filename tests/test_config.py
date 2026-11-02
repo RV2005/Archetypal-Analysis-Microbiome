@@ -1,6 +1,9 @@
+import copy
 from pathlib import Path
 
-from archetypal_analysis.pipeline.config import load_config
+import pytest
+
+from archetypal_analysis.pipeline.config import ConfigError, load_config, validate_config
 
 
 def test_experiment_inheritance():
@@ -19,6 +22,7 @@ def test_experiment_inheritance():
     assert cfg["prediction"]["logistic_regression"]["C_values"] == [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
     assert cfg["prediction"]["logistic_regression"]["inner_cv_splits"] == 4
     assert cfg["stability"]["enabled"] is True
+    assert cfg["stability"]["heldout_projection"]["test_frac"] == 0.2
 
 def test_visualization_ordering_config_defaults():
     root = Path(__file__).resolve().parents[1]
@@ -36,6 +40,15 @@ def test_visualization_ordering_config_defaults():
     assert projection["marker_mode"] in {"symbol", "numeric"}
     assert isinstance(projection["numeric_marker"], bool)
     assert projection["marker_legend"]["enabled"] is False
+
+
+def test_heldout_projection_test_frac_must_be_between_zero_and_one():
+    root = Path(__file__).resolve().parents[1]
+    cfg = load_config(root / "configs/experiments/dog_lifestyle.yaml")
+    invalid = copy.deepcopy(cfg)
+    invalid["stability"]["heldout_projection"]["test_frac"] = 1.0
+    with pytest.raises(ConfigError, match="test_frac"):
+        validate_config(invalid)
 
 def test_hadza_prediction_uses_grouped_cv_and_retains_subject_id():
     root = Path(__file__).resolve().parents[1]

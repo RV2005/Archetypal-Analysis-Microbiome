@@ -260,6 +260,8 @@ def validate_config(cfg: Mapping[str, Any]) -> None:
     heldout_fractions = projection_cfg.get("fractions", []) or []
     if not isinstance(heldout_fractions, list) or any(not 0 < float(value) < 1 for value in heldout_fractions):
         raise ConfigError("stability.heldout_projection.fractions must contain values strictly between 0 and 1")
+    if not 0 < float(projection_cfg.get("test_frac", 0.2)) < 1:
+        raise ConfigError("stability.heldout_projection.test_frac must be strictly between 0 and 1")
     stability_parallel = stability.get("parallel", {}) or {}
     if not isinstance(stability_parallel, Mapping):
         raise ConfigError("stability.parallel must be a mapping")
@@ -459,6 +461,8 @@ def normalize_selection_mode(cfg: Mapping[str, Any]) -> str:
     heldout_fractions = projection_cfg.get("fractions", []) or []
     if not isinstance(heldout_fractions, list) or any(not 0 < float(value) < 1 for value in heldout_fractions):
         raise ConfigError("stability.heldout_projection.fractions must contain values strictly between 0 and 1")
+    if not 0 < float(projection_cfg.get("test_frac", 0.2)) < 1:
+        raise ConfigError("stability.heldout_projection.test_frac must be strictly between 0 and 1")
     stability_parallel = stability.get("parallel", {}) or {}
     if not isinstance(stability_parallel, Mapping):
         raise ConfigError("stability.parallel must be a mapping")

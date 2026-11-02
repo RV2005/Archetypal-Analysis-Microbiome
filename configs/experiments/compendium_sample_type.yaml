@@ -54,7 +54,7 @@ visualization:
     cmap: tab20
   multi_k_simplex:
     cmap: tab20
-    k_values: [4, 7, 11, 13]
+    k_values: null
   stacked_bar:
     cmap: tab20
   pcoa:

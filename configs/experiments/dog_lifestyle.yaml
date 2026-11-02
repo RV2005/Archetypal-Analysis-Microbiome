@@ -42,7 +42,7 @@ visualization:
     Archetype 7: "#982ead"
     Archetype 8: "#e377c2"
   multi_k_simplex:
-    k_values: [4, 7, 11, 13]
+    k_values: null
   taxa:
     num_taxa: 5
 

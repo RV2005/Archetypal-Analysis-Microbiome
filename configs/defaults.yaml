@@ -57,7 +57,7 @@ qc:
 fit:
   # k_values: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
   # k_values: [5, 6, 7, 8]
-  k_values: [3, 4, 5, 6, 7, 8, 9, 10]
+  k_values: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
   method: pgd
   max_iter: 10000
   random_state: 42
@@ -209,7 +209,7 @@ stability:
     seeds: [0,1,2,3,4,42]
   sampling:
     enabled: true
-    fractions: [0.5, 0.6, 0.7, 0.8, 0.9]
+    fractions: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     repeats: 5
     random_state: 42
     continuous_stratify_bins: 10
@@ -219,7 +219,8 @@ stability:
     group_namespace_columns: null   # null inherits prediction.group_namespace_columns
   heldout_projection:
     enabled: true
-    fractions: [0.8, 0.9]
+    test_frac: 0.2            # fixed test set; sampling fractions apply to the remaining fit pool
+    fractions: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     max_iter: 2000
     tol: 1.0e-8
   parallel:

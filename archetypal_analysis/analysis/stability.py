@@ -261,6 +261,52 @@ def stratified_subsample_ids(
     return local.index[train_pos].astype(str).tolist(), local.index[heldout_pos].astype(str).tolist()
 
 
+def stratified_common_test_splits(
+    metadata: pd.DataFrame,
+    target: str,
+    legend_type: str,
+    fractions: Sequence[float],
+    repeats: int,
+    test_frac: float,
+    random_state: int,
+    *,
+    group_column: str | None = None,
+    continuous_bins: int = 10,
+) -> tuple[list[str], dict[tuple[float, int], tuple[list[str], int]]]:
+    """Reserve one test set, then sample every fit fraction from its complement."""
+    if not 0 < float(test_frac) < 1:
+        raise ValueError("held-out projection test_frac must be between 0 and 1")
+    if int(repeats) < 1:
+        raise ValueError("sampling repeats must be at least 1")
+
+    fit_pool_ids, test_ids = stratified_subsample_ids(
+        metadata,
+        target,
+        legend_type,
+        1.0 - float(test_frac),
+        int(random_state),
+        group_column=group_column,
+        continuous_bins=continuous_bins,
+    )
+    fit_pool_metadata = metadata.loc[fit_pool_ids]
+    splits: dict[tuple[float, int], tuple[list[str], int]] = {}
+    for fraction in fractions:
+        fraction = float(fraction)
+        for repeat in range(int(repeats)):
+            seed = int(random_state) + int(round(fraction * 1000)) * 1000 + repeat
+            train_ids, _unused_fit_ids = stratified_subsample_ids(
+                fit_pool_metadata,
+                target,
+                legend_type,
+                fraction,
+                seed,
+                group_column=group_column,
+                continuous_bins=continuous_bins,
+            )
+            splits[(fraction, repeat)] = (train_ids, seed)
+    return test_ids, splits
+
+
 # Process workers load the fit matrix once per process instead of reparsing it for every run.
 _WORKER_DATA: pd.DataFrame | None = None
 
